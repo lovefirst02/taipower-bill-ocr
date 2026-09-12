@@ -1,0 +1,7 @@
+Pillow>=10
+pdfplumber>=0.11.10
+winrt-runtime>=3.2
+winrt-Windows.Globalization>=3.2
+winrt-Windows.Graphics.Imaging>=3.2
+winrt-Windows.Media.Ocr>=3.2
+winrt-Windows.Storage>=3.2

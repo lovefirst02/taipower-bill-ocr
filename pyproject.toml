@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taipower-bill-ocr"
+version = "0.1.0"
+description = "Offline Taiwan Power bill extraction using Windows.Media.Ocr"
+requires-python = ">=3.10"
+dependencies = [
+  "Pillow>=10",
+  "pdfplumber>=0.11.10",
+  "winrt-runtime>=3.2",
+  "winrt-Windows.Globalization>=3.2",
+  "winrt-Windows.Graphics.Imaging>=3.2",
+  "winrt-Windows.Media.Ocr>=3.2",
+  "winrt-Windows.Storage>=3.2",
+]
+
+[project.optional-dependencies]
+paddleocr = ["paddleocr>=3.5,<4"]
+mistralocr = ["mistralai==2.9.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
