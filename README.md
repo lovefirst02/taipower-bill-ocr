@@ -1,18 +1,34 @@
-# 台電帳單 Windows OCR
+# 台電帳單 OCR
 
-離線呼叫 Windows `Windows.Media.Ocr`，保留文字座標後依帳單版面切成 Block，最後輸出方便程式查詢的 Python `dict`／JSON。
+離線辨識台電電費帳單（PaddleOCR 與 Windows `Windows.Media.Ocr`），保留文字座標後依帳單版面切成 Block，
+輸出方便程式查詢的 Python `dict`／JSON，或整理成 Excel；另附可預覽原圖、逐欄修正的英文桌面程式。
 
 ## 安裝與執行
 
-需要 Windows 10/11，並在「語言與地區」安裝繁體中文 OCR。
+需要 Windows 10/11 與 [uv](https://docs.astral.sh/uv/)。專案已以 `.python-version` 與 `uv.lock` 固定版本，
+沒有 Python 時 uv 會自動下載 3.10。
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .
-python -m taipower_bill_ocr samples\public_commons_2024.jpg --pretty
-python -m taipower_bill_ocr samples\high_voltage_asia_university_2024.pdf --pages 1,2,3 --pretty
+uv sync --extra app
 ```
+
+`--extra app` 會安裝 Excel 匯出與 PaddleOCR；只需要 Windows OCR 的 JSON 輸出時執行 `uv sync` 即可。
+
+```powershell
+# 桌面程式
+uv run taipower-bill-gui
+
+# 多個帳單輸出成一張 Excel（預設 PaddleOCR + Windows OCR 交叉檢查）
+uv run python -m taipower_bill_ocr bill-2024.pdf bill-2025.pdf --excel bills.xlsx
+
+# 單一帳單輸出 JSON（Windows OCR）
+uv run python -m taipower_bill_ocr samples\public_commons_2024.jpg --pretty
+uv run python -m taipower_bill_ocr samples\high_voltage_asia_university_2024.pdf --pages 1,2,3 --pretty
+```
+
+- Windows OCR 需要在「設定 → 時間與語言 → 語言與地區」安裝**中文（繁體）**的 OCR 功能。
+- 第一次執行 PaddleOCR 會下載模型（約 30 MB，存於 `%USERPROFILE%\.paddlex`）；離線電腦可設定
+  `TAIPOWER_PADDLE_MODELS` 指向含 `PP-OCRv6_small_det`、`PP-OCRv6_small_rec` 的資料夾。
 
 Python API：
 
@@ -158,20 +174,15 @@ bill = extract_bill(
 執行全部測試：
 
 ```powershell
-python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 > OCR 不可能對任意模糊、遮蔽或極低解析度影像保證 100%。建議以 `quality` 與業務規則覆核關鍵金額；`raw_lines` 始終保留可供追查的 OCR 文字。
 
 ## PaddleOCR 對照測試
 
-PaddleOCR 是獨立的實驗路徑，不會改動上面的 Windows OCR。CPU 環境先安裝
-PaddlePaddle 3.x 與本專案的 PaddleOCR 選配依賴：
-
-```powershell
-python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
-python -m pip install -e ".[paddleocr]"
-```
+PaddleOCR 是獨立的路徑，不會改動上面的 Windows OCR。`uv sync --extra app`（或只裝
+`--extra paddleocr`）已包含 CPU 版 PaddlePaddle 3.2 與 PaddleOCR。
 
 圖片測試：
 
@@ -261,7 +272,7 @@ print(result["quality"]["warnings"])
 每個 Hybrid Block 也會以 `ocr_raw_lines.windows` 與
 `ocr_raw_lines.paddleocr` 保留兩套 OCR 原文，方便後續人工核對。單獨使用
 `ocr_backend="windows"` 或 `ocr_backend="paddleocr"` 的既有輸出不會改變。
-# 本期預繳款欄位
+## 本期預繳款欄位
 
 一般與 detailed 帳單的「應繳總金額」及「繳費總金額」皆對應
 `result.get("charge_info.total_amount_twd")`；稅前總額另存於
@@ -291,7 +302,7 @@ result.get("charge_info.supplemental_charge_refund_twd")    # 補收(退)金額(
 Excel 的「預繳費用」可對應此 key。辨識到該標籤時停用推測總額的補正，
 避免把抵扣後的零元／低額總額改成流動電費。本欄位不代表自動寫入 Excel。
 
-# 匯出 Excel
+## 匯出 Excel
 
 Excel 匯出（指令列與桌面程式）預設使用 **PaddleOCR + Windows OCR 交叉檢查**（`--ocr-backend crosscheck`）：
 
@@ -301,20 +312,27 @@ Excel 匯出（指令列與桌面程式）預設使用 **PaddleOCR + Windows OCR
   稅前金額 × 1.05 而 Paddle 的值相符，就直接採用 Paddle 的值。
 - 只有含計費內容的頁面才會再跑 Windows OCR；處理時間約為只用 Paddle 的兩倍。
   可用 `--ocr-backend paddleocr`（較快）或 `windows` 改為單一引擎。
-安裝選配依賴後，可一次處理多個檔案並輸出成一張工作表；每一頁有「計費內容」的帳單會變成一列，
+
+可一次處理多個檔案並輸出成一張工作表；每一頁有「計費內容」的帳單會變成一列，
 沒有計費內容的頁面（例如高壓帳單第二頁）會自動略過：
 
 ```powershell
-pip install -e ".[excel,paddleocr]"
-python -m taipower_bill_ocr bill-2024.pdf bill-2025.pdf --excel bills.xlsx
+uv run python -m taipower_bill_ocr bill-2024.pdf bill-2025.pdf --excel bills.xlsx
 ```
 
-Python API：
+Python API（與指令列相同的交叉檢查流程）：
 
 ```python
-from taipower_bill_ocr import extract_pdf, bills_to_rows, write_rows_to_excel
+from pathlib import Path
 
-rows = bills_to_rows(extract_pdf("bill.pdf"), source="bill.pdf")
+from taipower_bill_ocr.batch import PageDone, PageExtractor, iter_batch
+from taipower_bill_ocr.excel_export import write_rows_to_excel
+
+rows = [
+    event.record.row
+    for event in iter_batch([Path("bill.pdf")], PageExtractor("crosscheck"))
+    if isinstance(event, PageDone) and event.record is not None
+]
 write_rows_to_excel(rows, "bills.xlsx")
 ```
 
@@ -331,8 +349,7 @@ write_rows_to_excel(rows, "bills.xlsx")
 ## 桌面程式（英文介面）
 
 ```powershell
-python -m taipower_bill_ocr.gui
-# 或安裝後執行 taipower-bill-gui
+uv run taipower-bill-gui
 ```
 
 選擇資料夾（可含子資料夾）後按 **Start Processing**，會逐頁處理資料夾內所有 PDF 與圖片。
@@ -346,18 +363,6 @@ python -m taipower_bill_ocr.gui
 - **Mark Reviewed & Next**（Ctrl+Enter）標記為已確認並跳到下一筆需檢查的列；Ctrl+↑/↓ 切換列。
   匯出時已確認列的「需人工檢查」欄會加上「已人工確認」。
 - 預覽可用滑鼠滾輪縮放、拖曳平移，或按 Fit Page／Zoom to Field。
-
-## 在其他電腦使用（只有 uv）
-
-```powershell
-uv sync --extra app          # 依 uv.lock 安裝；沒有 Python 時 uv 會自動下載 3.10
-uv run taipower-bill-gui     # 桌面程式
-uv run python -m taipower_bill_ocr bills\*.pdf --excel bills.xlsx
-```
-
-- 第一次執行 PaddleOCR 會下載模型（約 30 MB，存於 `%USERPROFILE%\.paddlex`）；離線電腦可設定
-  `TAIPOWER_PADDLE_MODELS` 指向含 `PP-OCRv6_small_det`、`PP-OCRv6_small_rec` 的資料夾。
-- Windows OCR（交叉檢查）需要在「設定 → 時間與語言 → 語言與地區」安裝**中文（繁體）**的 OCR 功能。
 
 ## 打包成 exe
 
