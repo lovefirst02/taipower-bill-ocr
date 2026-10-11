@@ -261,3 +261,118 @@ print(result["quality"]["warnings"])
 每個 Hybrid Block 也會以 `ocr_raw_lines.windows` 與
 `ocr_raw_lines.paddleocr` 保留兩套 OCR 原文，方便後續人工核對。單獨使用
 `ocr_backend="windows"` 或 `ocr_backend="paddleocr"` 的既有輸出不會改變。
+# 本期預繳款欄位
+
+一般與 detailed 帳單的「應繳總金額」及「繳費總金額」皆對應
+`result.get("charge_info.total_amount_twd")`；稅前總額另存於
+`charge_info.pretax_total_twd`。
+
+一般與 detailed 帳單支援「本期預繳」／「本期預繳金額」，取值方式：
+
+```python
+prepaid = result.get("charge_info.prepaid_applied_twd")
+```
+
+其他計費內容可獨立取值（一般與 detailed 版型皆支援）：
+
+```python
+result.get("charge_info.current_prepaid_balance_twd")       # 本期預繳餘額
+result.get("charge_info.previous_prepaid_balance_twd")      # 上期預繳餘額
+result.get("charge_info.electricity_price_adjustment_twd")  # 電價調整金額
+result.get("charge_info.supplemental_charge_refund_twd")    # 補收(退)金額(含停電扣減)
+```
+
+各欄位保留帳單原始金額，不互相加總或用餘額推算抵扣款；補收退項目不會因標籤含「退」就自動改為負數。
+有預繳餘額、電價調整或補收退標籤時，也停用推測總額的補正。
+這是 OCR 原文的 parser 支援，並不保證辨識引擎能讀出所有模糊／缺字影像。
+
+`prepaid_applied_twd` 代表帳單明列的本期預繳抵扣款，不是預繳餘額或歷史預繳總額。
+保留印出的正負號與 `0`；缺漏時回傳 `None`，不要自行補零。
+Excel 的「預繳費用」可對應此 key。辨識到該標籤時停用推測總額的補正，
+避免把抵扣後的零元／低額總額改成流動電費。本欄位不代表自動寫入 Excel。
+
+# 匯出 Excel
+
+Excel 匯出（指令列與桌面程式）預設使用 **PaddleOCR + Windows OCR 交叉檢查**（`--ocr-backend crosscheck`）：
+
+- 一律採用 PaddleOCR 的值；Windows OCR 只補 Paddle 漏讀的欄位，並標記「由 Windows OCR 補值」。
+- 兩者讀到不同值時保留 Paddle 的值並標記需檢查，桌面程式會在欄位旁提供「Use …」按鈕一鍵改用 Windows 的值。
+- 帳單本身的算式能判斷對錯時不打擾使用者：例如 Windows 讀出的計費期間起訖顛倒，或應繳總金額不等於
+  稅前金額 × 1.05 而 Paddle 的值相符，就直接採用 Paddle 的值。
+- 只有含計費內容的頁面才會再跑 Windows OCR；處理時間約為只用 Paddle 的兩倍。
+  可用 `--ocr-backend paddleocr`（較快）或 `windows` 改為單一引擎。
+安裝選配依賴後，可一次處理多個檔案並輸出成一張工作表；每一頁有「計費內容」的帳單會變成一列，
+沒有計費內容的頁面（例如高壓帳單第二頁）會自動略過：
+
+```powershell
+pip install -e ".[excel,paddleocr]"
+python -m taipower_bill_ocr bill-2024.pdf bill-2025.pdf --excel bills.xlsx
+```
+
+Python API：
+
+```python
+from taipower_bill_ocr import extract_pdf, bills_to_rows, write_rows_to_excel
+
+rows = bills_to_rows(extract_pdf("bill.pdf"), source="bill.pdf")
+write_rows_to_excel(rows, "bills.xlsx")
+```
+
+欄位依序為計費期間、電號、計費度數與轉供度數（尖峰／半尖峰／週六半尖峰／離峰）、基本電費、
+流動電費、功率因數調整費、預繳費用、其他調整費用、稅前應繳總金額、應繳總金額，最後附上
+來源檔案、頁碼與「需人工檢查」。
+
+- `其他調整費用 = 稅前應繳總金額 − 基本電費 − 流動電費 − 功率因數調整費`。缺少前三項任一項時留空；
+  未辨識到功率因數調整費時以 0 計算並標記。
+- 辨識不到的欄位維持空白，不補 0。
+- 「需人工檢查」會列出缺漏欄位、計費期間起訖顛倒、應繳總金額與「稅前金額＋營業稅」不符，
+  以及 `quality.warnings` 的推導紀錄。
+
+## 桌面程式（英文介面）
+
+```powershell
+python -m taipower_bill_ocr.gui
+# 或安裝後執行 taipower-bill-gui
+```
+
+選擇資料夾（可含子資料夾）後按 **Start Processing**，會逐頁處理資料夾內所有 PDF 與圖片。
+
+下方 **Review** 區會並排顯示帳單原圖與欄位表單：
+
+- 點選表格中的一列，左側顯示該頁帳單；有問題的列會自動放大到第一個需檢查的欄位。
+- 點選右側任一欄位，預覽會縮放到帳單上對應的位置並以紅框標示；找不到精確位置時以橘色虛線框出所在區塊。
+- 黃色欄位為需檢查的值。輸入後按 Enter 儲存並跳到下一個需檢查欄位，Esc 還原；修改稅前總額、基本電費、
+  流動電費或功率因數調整費會自動重算其他調整費用。
+- **Mark Reviewed & Next**（Ctrl+Enter）標記為已確認並跳到下一筆需檢查的列；Ctrl+↑/↓ 切換列。
+  匯出時已確認列的「需人工檢查」欄會加上「已人工確認」。
+- 預覽可用滑鼠滾輪縮放、拖曳平移，或按 Fit Page／Zoom to Field。
+
+## 在其他電腦使用（只有 uv）
+
+```powershell
+uv sync --extra app          # 依 uv.lock 安裝；沒有 Python 時 uv 會自動下載 3.10
+uv run taipower-bill-gui     # 桌面程式
+uv run python -m taipower_bill_ocr bills\*.pdf --excel bills.xlsx
+```
+
+- 第一次執行 PaddleOCR 會下載模型（約 30 MB，存於 `%USERPROFILE%\.paddlex`）；離線電腦可設定
+  `TAIPOWER_PADDLE_MODELS` 指向含 `PP-OCRv6_small_det`、`PP-OCRv6_small_rec` 的資料夾。
+- Windows OCR（交叉檢查）需要在「設定 → 時間與語言 → 語言與地區」安裝**中文（繁體）**的 OCR 功能。
+
+## 打包成 exe
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
+```
+
+產出 `dist\TaipowerBillOCR\`（約 650 MB）與 `dist\TaipowerBillOCR-<版本>.zip`（約 250 MB）。建置使用獨立的
+`.venv-build`，不會更動日常使用的 `.venv`。
+
+使用者端：解壓縮後執行 `TaipowerBillOCR.exe`，不需安裝 Python。PaddleOCR 模型已內含於 `models\`，可離線使用；
+交叉檢查同樣需要 Windows 的繁體中文 OCR 功能。紀錄與錯誤報告存於 `%LOCALAPPDATA%\TaipowerBillOCR\`。
+
+在新電腦上確認 exe 可用（不開視窗，結果寫入 `%LOCALAPPDATA%\TaipowerBillOCR\self_test.json`）：
+
+```powershell
+.\TaipowerBillOCR.exe --self-test C:\path\to\bill.pdf
+```
