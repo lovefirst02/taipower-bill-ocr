@@ -6,7 +6,8 @@
 ## 安裝與執行
 
 需要 Windows 10/11 與 [uv](https://docs.astral.sh/uv/)。專案已以 `.python-version` 與 `uv.lock` 固定版本，
-沒有 Python 時 uv 會自動下載 3.10。
+沒有 Python 時 uv 會自動下載 3.13。
+Python 3.14 目前無法使用：PaddlePaddle（含最新 3.3.1 與預覽版）尚未提供 3.14 的套件。
 
 ```powershell
 uv sync --extra app
