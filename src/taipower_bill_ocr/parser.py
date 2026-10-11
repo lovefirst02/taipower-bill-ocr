@@ -199,7 +199,7 @@ def _bank_autopay_energy_groups_from_raw_lines(
 
     group_aliases = {
         "energy_consumption": ("計費度數", "費度數", "十費度數"),
-        "transferred_energy": ("轉供度數", "專供度數"),
+        "transferred_energy": ("轉供度數", "專供度數", "供度數"),
     }
     component_aliases = (
         (
@@ -409,9 +409,17 @@ _INLINE_FIELD_PATTERNS = {
     },
     "charge_info": {
         "energy_charge_twd": re.compile(r"流動電費\s*[:：]?\s*([+-]?[\d,.]+)\s*元?"),
-        "total_amount_twd": re.compile(r"應繳總金額\s*[:：]?\s*([+-]?[\d,.]+)\s*元?"),
+        "total_amount_twd": re.compile(r"^\s*(?:應繳總金額|繳費總金額)\s*[:：]?\s*([+-]?[\d,.]+)\s*元?"),
     },
 }
+
+_ADJUSTMENT_LABELS = {
+    "current_prepaid_balance_twd": ("本期預繳餘額",),
+    "previous_prepaid_balance_twd": ("上期預繳餘額",),
+    "electricity_price_adjustment_twd": ("電價調整金額",),
+    "supplemental_charge_refund_twd": ("補收(退)金額(含停電扣減)", "補收(退)金額"),
+}
+
 
 _FIELD_SPECS: dict[str, dict[str, tuple[tuple[str, ...], str]]] = {
     "user_info": {
@@ -436,6 +444,8 @@ _FIELD_SPECS: dict[str, dict[str, tuple[tuple[str, ...], str]]] = {
     },
     "charge_info": {
         "basic_charge_twd": (("基本電費約定", "基本電費"), "number"),
+        "prepaid_applied_twd": (("本期預繳金額", "本期預繳"), "number"),
+        **{key: (labels, "number") for key, labels in _ADJUSTMENT_LABELS.items()},
         "energy_charge_twd": (("流動電費", "流動費"), "number"),
         "shared_public_charge_twd": (("分攤公共電費",), "number"),
         "discount_twd": (("優惠金額",), "number"),
@@ -445,7 +455,7 @@ _FIELD_SPECS: dict[str, dict[str, tuple[tuple[str, ...], str]]] = {
         "pretax_total_twd": (("稅前應繳總金額",), "number"),
         "business_tax_twd": (("營業稅",), "number"),
         "total_amount_twd": (
-            ("應繳總金額", "應繳總金", "總金額", "蟌金額"),
+            ("應繳總金額", "繳費總金額", "應繳總金", "總金額", "蟌金額"),
             "number",
         ),
     },
@@ -478,6 +488,8 @@ _BLOCK_LABELS = {
 }
 
 _FIELD_LABELS = {
+    **{key: labels[0] for key, labels in _ADJUSTMENT_LABELS.items()},
+    "prepaid_applied_twd": "本期預繳",
     "tariff_type": "電價種類",
     "time_type": "時間種類",
     "base_reading": "底度",
@@ -531,6 +543,25 @@ def _compact(text: str) -> str:
         )
     ).replace("·", ".")
     return re.sub(r"[^0-9A-Za-z\u3400-\u9fff.+-]", "", text).lower()
+
+
+def _adjustment_tail(text: str, field: str) -> str | None:
+    """Match a complete adjustment label, excluding unrelated suffixes."""
+    compact = re.sub(r"[\s()（）]", "", text)
+    aliases = "|".join(re.escape(re.sub(r"[()（）]", "", alias))
+                       for alias in _ADJUSTMENT_LABELS[field])
+    match = re.fullmatch(r"(?:" + aliases + r")[:：]?([+-]?\d[\d,]*(?:\.\d+)?元?)?", compact)
+    return (match.group(1) or "") if match else None
+
+
+def _prepaid_tail(text: str) -> str | None:
+    """Match the current applied payment, never a balance or historical label."""
+    compact = re.sub(r"\s+", "", text)
+    match = re.fullmatch(
+        r"(?:本期預繳金額|本期預繳)[:：]?([+-]?\d[\d,]*(?:\.\d+)?元?)?",
+        compact,
+    )
+    return (match.group(1) or "") if match else None
 
 
 def _number(value: str) -> int | float:
@@ -642,7 +673,9 @@ def _energy_groups(
     """Parse repeated energy labels only within their printed group heading."""
     group_labels = {
         "energy_consumption": ("計費度數", "计费度数", "十費度數"),
-        "transferred_energy": ("轉供度數", "转供度数"),
+        # OCR sometimes drops 轉 or reads it as 專. Keep the printed heading
+        # as a boundary even when the first billed component is unreadable.
+        "transferred_energy": ("轉供度數", "转供度数", "專供度數", "供度數"),
     }
     headers = [
         (group_key, line)
@@ -1250,21 +1283,37 @@ def _parse_detailed_high_voltage_layout(lines: list[OcrLine]) -> BillResult:
         user_fields["industry"] = industry
 
     charge_specs = {
+        **_ADJUSTMENT_LABELS,
         "basic_charge_twd": ("基本電費",),
+        "prepaid_applied_twd": ("本期預繳金額", "本期預繳"),
         "energy_charge_twd": ("流動電費",),
         "power_factor_adjustment_twd": ("功率因數調整費",),
         "ebill_discount_twd": ("電子帳單優惠減收金額",),
         "electricity_price_adjustment_twd": ("電價調整金額",),
         "pretax_total_twd": ("稅前應繳總金額",),
         "business_tax_twd": ("營業稅",),
-        "total_amount_twd": ("應繳總金額",),
+        "total_amount_twd": ("應繳總金額", "繳費總金額"),
     }
     charge_fields: dict[str, Any] = {}
     for field_key, aliases in charge_specs.items():
-        label = label_line("charge_info", *aliases)
+        label = (next((line for line in scoped["charge_info"]
+                       if _prepaid_tail(line.text) is not None), None)
+                 if field_key == "prepaid_applied_twd"
+                 else label_line("charge_info", *aliases))
+        if field_key in _ADJUSTMENT_LABELS:
+            label = next((line for line in scoped["charge_info"]
+                          if _adjustment_tail(line.text, field_key) is not None), None)
         if label is None:
             continue
         inline_tail = label.text.split("：", 1)[1] if "：" in label.text else ""
+        if field_key == "total_amount_twd":
+            compact_label = _compact(label.text)
+            alias = next(alias for alias in aliases if compact_label.startswith(_compact(alias)))
+            inline_tail = compact_label[len(_compact(alias)):]
+        if field_key == "prepaid_applied_twd":
+            inline_tail = _prepaid_tail(label.text)
+        elif field_key in _ADJUSTMENT_LABELS:
+            inline_tail = _adjustment_tail(label.text, field_key)
         value = _detailed_amount(inline_tail) if inline_tail else None
         if value is None:
             value_line = _closest_right_line(label, scoped["charge_info"])
@@ -1346,7 +1395,10 @@ def _parse_detailed_high_voltage_layout(lines: list[OcrLine]) -> BillResult:
             "document_type": "detailed_high_voltage_bill",
             "blocks": blocks,
             "by_label": {
-                _BLOCK_LABELS.get(key, key): fields
+                _BLOCK_LABELS.get(key, key): {
+                    (_FIELD_LABELS[field] if field == "prepaid_applied_twd" or field in _ADJUSTMENT_LABELS else field): value
+                    for field, value in fields.items()
+                }
                 for key, fields in fields_by_block.items()
             },
             "quality": {"warnings": [], "unknown_block_count": 0},
@@ -1441,6 +1493,10 @@ def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
                 else ordered
             )
             for line in scoped_lines:
+                if field_key == "prepaid_applied_twd" and _prepaid_tail(line.text) is None:
+                    continue
+                if field_key in _ADJUSTMENT_LABELS and _adjustment_tail(line.text, field_key) is None:
+                    continue
                 compact_text = _compact(line.text)
                 matching_alias = next(
                     (alias for alias in aliases if _compact(alias) in compact_text),
@@ -1642,7 +1698,12 @@ def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
 
     energy_charge = charge_fields.get("energy_charge_twd")
     total_amount = charge_fields.get("total_amount_twd")
-    if total_amount is None:
+    has_adjustments = any(
+        _prepaid_tail(line.text) is not None
+        or any(_adjustment_tail(line.text, key) is not None for key in _ADJUSTMENT_LABELS)
+        for line in assigned_lines.get("charge_info", [])
+    )
+    if total_amount is None and not has_adjustments:
         currency_amounts = [
             _parse_value(line.text, "number")
             for line in ordered
@@ -1660,7 +1721,8 @@ def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
             total_amount = charge_fields["total_amount_twd"]
             warnings.append("total_recovered_from_payment_summary")
     if (
-        isinstance(energy_charge, (int, float))
+        not has_adjustments
+        and isinstance(energy_charge, (int, float))
         and isinstance(total_amount, (int, float))
         and 0 <= total_amount < energy_charge * 0.1
         and abs(round(energy_charge) - energy_charge) <= 0.5
