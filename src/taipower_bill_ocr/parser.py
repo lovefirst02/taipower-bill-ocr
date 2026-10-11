@@ -22,6 +22,10 @@ class OcrLine:
 class BillResult(dict):
     """Structured bill whose canonical fields are addressable by dotted path."""
 
+    # OCR lines in original-image coordinates, kept outside the dict so they
+    # never reach JSON output; used to point a preview at a field's location.
+    ocr_lines: list[OcrLine] | tuple[OcrLine, ...] = ()
+
     def get(self, path: str, default: Any = None) -> Any:
         current: Any = self
         for part in path.split("."):

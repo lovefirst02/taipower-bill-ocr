@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,22 +34,53 @@ _BLOCK_TITLES = {
 }
 
 
+DETECTION_MODEL = "PP-OCRv6_small_det"
+RECOGNITION_MODEL = "PP-OCRv6_small_rec"
+
+
+def bundled_model_dir() -> Path | None:
+    """Folder holding pre-downloaded Paddle models, if one is available.
+
+    ``TAIPOWER_PADDLE_MODELS`` wins; a packaged app also looks in the
+    ``models`` folder beside its executable so it can run offline.
+    """
+    configured = os.environ.get("TAIPOWER_PADDLE_MODELS")
+    candidates = [Path(configured)] if configured else []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / "models")
+    return next(
+        (
+            path
+            for path in candidates
+            if (path / DETECTION_MODEL).is_dir() and (path / RECOGNITION_MODEL).is_dir()
+        ),
+        None,
+    )
+
+
 def _create_paddle_engine(language: str) -> Any:
     try:
         from paddleocr import PaddleOCR
     except ImportError as exc:
         raise RuntimeError(
-            "PaddleOCR 尚未安裝；請先執行：pip install paddlepaddle paddleocr"
+            "PaddleOCR 尚未安裝；請先執行：uv sync --extra paddleocr"
         ) from exc
 
+    model_options: dict[str, Any] = {}
+    if (model_dir := bundled_model_dir()) is not None:
+        model_options = {
+            "text_detection_model_dir": str(model_dir / DETECTION_MODEL),
+            "text_recognition_model_dir": str(model_dir / RECOGNITION_MODEL),
+        }
     return PaddleOCR(
         device="cpu",
-        text_detection_model_name="PP-OCRv6_small_det",
-        text_recognition_model_name="PP-OCRv6_small_rec",
+        text_detection_model_name=DETECTION_MODEL,
+        text_recognition_model_name=RECOGNITION_MODEL,
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         engine="paddle",
+        **model_options,
     )
 
 
@@ -264,6 +297,7 @@ def extract_bill_with_paddleocr(
         score_threshold=score_threshold,
     )
     result = parse_bill_layout(lines)
+    result.ocr_lines = lines
     # A layout-specific parser can identify a document more precisely than the
     # coarse, pre-parser detector (which commonly reports photographed detailed
     # bills as ``unknown``).  Preserve that more specific classification.

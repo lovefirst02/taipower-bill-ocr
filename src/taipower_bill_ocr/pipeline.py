@@ -189,6 +189,7 @@ def extract_bill(
         document_type = "unknown"
         detection_method = "full_page"
     result = parse_bill_layout(lines)
+    result.ocr_lines = lines
     # Layout parsing has stronger evidence than the coarse page-level detector.
     # Keep a parser-selected subtype while retaining the detector result for
     # legacy layouts whose parser does not set ``document_type``.
