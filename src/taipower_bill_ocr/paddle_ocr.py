@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -272,6 +273,105 @@ def _recognize_paddle_blocks(
     return lines, bounds, words_by_block, document_type, detection_method
 
 
+# Labels whose value sits to their right on the same row. When Paddle's text
+# detector skips that value, OCR-ing just the row again usually finds it.
+_RETRY_LABELS = (
+    "基本電費",
+    "流動電費",
+    "功率因數調整費",
+    "本期預繳",
+    "稅前應繳總金額",
+    "應繳總金額",
+    "計費期間",
+    "尖峰度數",
+    "半尖峰度數",
+    "週六半尖峰度數",
+    "離峰度數",
+)
+# The payment strip prints values below their labels, so it is not retried.
+_RETRY_BLOCKS = {"user_info", "charge_info", "energy_usage", None}
+
+
+def _compact_label(text: str) -> str:
+    return re.sub(r"[\s:：()（）]", "", text).replace("缴", "繳")
+
+
+def _labels_missing_values(lines: Sequence[OcrLine]) -> list[OcrLine]:
+    """Known label lines with no number printed to their right."""
+    missing = []
+    for label in lines:
+        compact = _compact_label(label.text)
+        alias = next((a for a in _RETRY_LABELS if compact.startswith(a)), None)
+        if alias is None or label.block_key not in _RETRY_BLOCKS:
+            continue
+        if re.search(r"\d", compact[len(alias):]):
+            continue  # value printed inline with the label
+        center = label.y + label.height / 2
+        has_value = any(
+            other is not label
+            and re.search(r"\d", other.text)
+            and other.x >= label.x + label.width * 0.5
+            and abs(other.y + other.height / 2 - center)
+            <= max(label.height, other.height) * 0.6
+            for other in lines
+        )
+        if not has_value:
+            missing.append(label)
+    return missing
+
+
+def _retry_missing_rows(
+    image: Image.Image,
+    lines: list[OcrLine],
+    bounds: Mapping[str, Mapping[str, int]],
+    *,
+    engine: Any,
+    score_threshold: float,
+) -> list[str]:
+    """Re-OCR rows whose value was not detected; returns the recovered labels.
+
+    Detection misses depend on the input image (colour and grayscale each miss
+    different values), so the row is tried in colour first, then grayscale.
+    New lines are appended to ``lines`` in original-image coordinates.
+    """
+    import numpy as np
+
+    recovered = []
+    for label in _labels_missing_values(lines):
+        block = bounds.get(label.block_key) if label.block_key else None
+        right = block["x"] + block["width"] if block else image.width
+        left = max(0, round(label.x) - 4)
+        top = max(0, round(label.y) - 6)
+        box = (left, top, min(image.width, right), min(image.height, round(label.y + label.height) + 6))
+        if box[2] - box[0] < 10 or box[3] - box[1] < 10:
+            continue
+        row = image.crop(box)
+        for variant in (row, ImageOps.grayscale(row).convert("RGB")):
+            # Paddle reads image files as BGR; pass arrays the same way.
+            bgr = np.ascontiguousarray(np.asarray(variant)[:, :, ::-1])
+            values = [
+                line
+                for line in _iter_paddle_lines(engine.predict(bgr), score_threshold)
+                if re.search(r"\d", line.text)
+                and left + line.x >= label.x + label.width * 0.5
+            ]
+            if values:
+                lines.extend(
+                    OcrLine(
+                        line.text,
+                        left + line.x,
+                        top + line.y,
+                        line.width,
+                        line.height,
+                        label.block_key,
+                    )
+                    for line in values
+                )
+                recovered.append(label.text)
+                break
+    return recovered
+
+
 def extract_bill_with_paddleocr(
     image_path: str | Path,
     *,
@@ -296,8 +396,19 @@ def extract_bill_with_paddleocr(
         language=language,
         score_threshold=score_threshold,
     )
+    with Image.open(path) as source:
+        page_image = ImageOps.exif_transpose(source).convert("RGB")
+    recovered = _retry_missing_rows(
+        page_image,
+        lines,
+        bounds,
+        engine=engine,
+        score_threshold=score_threshold,
+    )
     result = parse_bill_layout(lines)
     result.ocr_lines = lines
+    if recovered:
+        result["quality"]["paddle_row_retry"] = recovered
     # A layout-specific parser can identify a document more precisely than the
     # coarse, pre-parser detector (which commonly reports photographed detailed
     # bills as ``unknown``).  Preserve that more specific classification.

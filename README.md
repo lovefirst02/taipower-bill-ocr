@@ -219,6 +219,10 @@ for result in results:
     print(result.get("energy_saving_info.comparison_rows"))
 ```
 
+Paddle 偶爾會漏掉某一列的數值（文字偵測沒框到），漏掉哪一列會隨圖片處理方式（彩色或灰階）而變。
+因此若已知標籤（如基本電費、流動電費、各時段度數、計費期間）右側沒有數字，程式會只裁下那一列重新辨識
+（先彩色、再灰階），找回的欄位記錄在 `quality.paddle_row_retry`。
+
 第一次執行會下載模型，因此會比後續執行久。Paddle PDF 路徑會在所有
 選定頁面共用同一個模型，不會每頁重新初始化。Paddle 路徑會先偵測台電帳單
 Block，再逐區裁切、增強對比並辨識；每行文字會帶回原圖座標與 `block_key`，因此
