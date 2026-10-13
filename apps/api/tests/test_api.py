@@ -220,11 +220,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(names), 2)  # Amy's two bills, not Ben's
         self.assertEqual([name.split("/")[0] for name in names], ["draft", "submitted"])
         saved = Path(submitted["evidence_file"])
-        self.assertEqual(archive.read(f"submitted/{saved.name}"), saved.read_bytes())
+        self.assertEqual(names, ["draft/feb.pdf", "submitted/jan.pdf"])  # the uploaded files' names
+        self.assertEqual(archive.read("submitted/jan.pdf"), saved.read_bytes())
         self.assertTrue(all(archive.read(name).startswith(b"%PDF") for name in names))
 
         only_submitted = zipfile.ZipFile(io.BytesIO(self.client.get("/api/evidence.zip", params={"user": "Amy", "status": "submitted"}).content))
-        self.assertEqual(only_submitted.namelist(), [f"submitted/{saved.name}"])
+        self.assertEqual(only_submitted.namelist(), ["submitted/jan.pdf"])
         self.assertEqual(self.client.get("/api/evidence.zip", params={"user": "Nobody"}).status_code, 404)
 
     def test_workbook_open_in_excel_is_reported(self):
@@ -530,7 +531,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         header = response.headers["content-disposition"]
         self.assertIn('filename="', header)
-        self.assertTrue(unquote(header.split("filename*=UTF-8''")[1]).endswith("台電帳單.pdf"))
+        self.assertEqual(unquote(header.split("filename*=UTF-8''")[1]), "台電帳單.pdf")
+
+    def test_bills_from_one_file_get_numbered_names_in_the_zip(self):
+        import zipfile
+
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: official_sample_bill()):
+            self.client.post("/api/uploads", data={"user": "Amy"}, files=[("files", ("台電.pdf", three_page_pdf(2), "application/pdf"))])
+            self.app.state.worker.wait_idle(10)
+        archive = zipfile.ZipFile(io.BytesIO(self.client.get("/api/evidence.zip", params={"user": "Amy"}).content))
+        self.assertEqual(sorted(archive.namelist()), ["draft/台電 (2).pdf", "draft/台電.pdf"])
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

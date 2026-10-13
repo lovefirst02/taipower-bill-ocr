@@ -25,7 +25,7 @@ from taipower_bill_ocr.excel_export import (
 )
 
 from . import evidence
-from .reports import WorkbookWriter, archive_evidence, evidence_path, export_workbook, workbook_dir
+from .reports import WorkbookWriter, archive_evidence, download_name, evidence_path, export_workbook, workbook_dir
 from .settings import Settings
 from .store import Store, now
 from .worker import OcrWorker, usage_marks_for
@@ -401,9 +401,7 @@ def create_app(
     @app.get("/api/items/{page_id}/evidence.pdf")
     def evidence_pdf(page_id: int) -> Response:
         page = page_or_404(page_id)
-        content = build_evidence_pdf(page)
-        name = Path(evidence_path(settings.output_dir, page)).name
-        return Response(content, media_type="application/pdf", headers=_attachment(name))
+        return Response(build_evidence_pdf(page), media_type="application/pdf", headers=_attachment(download_name(page)))
 
     # ---------------------------------------------------------------- export
     @app.get("/api/evidence.zip")
@@ -420,6 +418,7 @@ def create_app(
         if not pages:
             raise HTTPException(404, "no bills to download")
         buffer = io.BytesIO()
+        used: set[str] = set()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             for page in pages:
                 saved = evidence_path(settings.output_dir, page)
@@ -428,7 +427,15 @@ def create_app(
                 else:
                     content = build_evidence_pdf(page)
                 folder = "submitted" if page["status"] == "submitted" else "draft"
-                archive.writestr(f"{folder}/{saved.name}", content)
+                # The uploaded file's own name; bills from one PDF (or files
+                # uploaded twice) are numbered like Windows does: "name (2)".
+                stem = Path(download_name(page)).stem
+                entry, copy = f"{folder}/{stem}.pdf", 1
+                while entry in used:
+                    copy += 1
+                    entry = f"{folder}/{stem} ({copy}).pdf"
+                used.add(entry)
+                archive.writestr(entry, content)
         name = f"evidence_{re.sub(r'[^A-Za-z0-9_-]+', '_', user) or 'user'}.zip"
         return Response(
             buffer.getvalue(),

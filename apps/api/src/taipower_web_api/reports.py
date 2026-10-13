@@ -59,6 +59,11 @@ def evidence_path(output_dir: Path, page: Mapping[str, Any]) -> Path:
     return output_dir / "evidence" / user_folder(page["user"]) / f"{page['upload_id']}_{stem}{suffix}.pdf"
 
 
+def download_name(page: Mapping[str, Any]) -> str:
+    """The name a downloaded evidence PDF gets: the uploaded file's own name."""
+    return f"{Path(page['filename']).stem}.pdf"
+
+
 def archive_evidence(output_dir: Path, page: Mapping[str, Any]) -> Path | None:
     """Move a reopened bill's submitted PDF to evidence/_reopened/<user>/.
 
