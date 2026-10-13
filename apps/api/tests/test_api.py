@@ -303,9 +303,92 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((page["uploaded_by"], page["submitted_by"]), ("Amy", "Amy"))
         self.assertEqual(page["submitted_at"], row["送出時間"])
 
+    def test_reopen_moves_the_submitted_pdf_to_the_archive(self):
+        self.upload("Amy", "jan.png")
+        item_id = self.first_item("Amy")["id"]
+        saved = Path(self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"}).json()["evidence_file"])
+        content = saved.read_bytes()
+
+        reopened = self.client.post(f"/api/items/{item_id}/reopen", json={"user": "Amy"}).json()
+        archived = Path(reopened["archived_evidence"])
+        self.assertFalse(saved.exists())
+        self.assertEqual(archived.parent, self.settings.evidence_dir / "_reopened" / "Amy")
+        self.assertTrue(archived.name.startswith(saved.stem))
+        self.assertEqual(archived.read_bytes(), content)
+
+        resubmitted = self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"}).json()
+        self.assertTrue(Path(resubmitted["evidence_file"]).is_file())
+        # Reopening a draft has nothing to archive.
+        self.client.post(f"/api/items/{item_id}/reopen", json={"user": "Amy"})
+        self.assertIsNone(self.client.post(f"/api/items/{item_id}/reopen", json={"user": "Amy"}).json()["archived_evidence"])
+
+    def test_user_name_cannot_escape_the_evidence_folder(self):
+        self.upload("../Amy", "jan.png")
+        item_id = self.first_item("../Amy")["id"]
+        saved = Path(self.client.post(f"/api/items/{item_id}/submit", json={"user": "../Amy"}).json()["evidence_file"])
+        self.assertEqual(saved.parent.parent, self.settings.evidence_dir)
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
+
+
+class PerUserWorkbookTests(unittest.TestCase):
+    """Copies of the app on several PCs, each writing its own workbooks."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.settings = Settings(data_dir=root / "data", output_dir=root / "out", web_dist=root / "no-web", workbooks="per_user")
+        self.app = create_app(self.settings, extractor_factory=FakeExtractor)
+        self.client = TestClient(self.app)
+        self.client.__enter__()
+
+    tearDown = ApiTests.tearDown
+    upload = ApiTests.upload
+    first_item = ApiTests.first_item
+
+    def rows(self, path):
+        sheet = load_workbook(path)["Bills"]
+        header = [cell.value for cell in sheet[1]]
+        return [dict(zip(header, [cell.value for cell in line])) for line in sheet.iter_rows(min_row=2)]
+
+    def test_each_user_gets_their_own_workbooks(self):
+        self.upload("Amy", "jan.png")
+        self.upload("Ben", "feb.png")
+        for user in ("Amy", "Ben"):
+            item_id = self.first_item(user)["id"]
+            self.assertEqual(self.client.post(f"/api/items/{item_id}/submit", json={"user": user}).json()["locked_workbooks"], [])
+
+        out = self.settings.output_dir
+        self.assertFalse((out / "taipower_bills_17.xlsx").exists())
+        self.assertEqual([row["來源檔案"] for row in self.rows(out / "Amy" / "taipower_bills_17.xlsx")], ["jan.png"])
+        self.assertEqual([row["來源檔案"] for row in self.rows(out / "Ben" / "taipower_bills_17.xlsx")], ["feb.png"])
+        self.assertTrue((out / "Amy" / "taipower_bills.xlsx").is_file())
+        self.assertEqual(self.client.get("/api/output", params={"user": "Amy"}).json()["folder"], str(out / "Amy"))
+
+        # Reopening rewrites only that user's workbooks.
+        self.client.post(f"/api/items/{self.first_item('Amy')['id']}/reopen", json={"user": "Amy"})
+        self.assertEqual(self.rows(out / "Amy" / "taipower_bills_17.xlsx"), [])
+        self.assertEqual(len(self.rows(out / "Ben" / "taipower_bills_17.xlsx")), 1)
+
+    def test_locked_user_workbook_is_retried_for_that_user(self):
+        import time
+
+        writer = reports.WorkbookWriter(self.app.state.store, self.settings.output_dir, retry_seconds=0.1, per_user=True)
+        writer.start()
+        self.addCleanup(writer.stop)
+        self.upload("Amy", "jan.png")
+        store = self.app.state.store
+        for page in store.pages(user="Amy", bills_only=True):
+            store.update_page(page["id"], status="submitted", submitted_at="2026-10-14T09:00:00", submitted_by="Amy")
+        with mock.patch.object(reports, "save_tables", return_value=False):
+            self.assertEqual(writer.write("Amy"), ["taipower_bills_17.xlsx"])
+        deadline = time.time() + 5
+        while writer.pending and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(writer.pending)
+        self.assertEqual(len(self.rows(self.settings.output_dir / "Amy" / "taipower_bills_17.xlsx")), 1)
 
 
 if __name__ == "__main__":

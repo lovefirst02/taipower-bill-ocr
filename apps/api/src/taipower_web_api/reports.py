@@ -10,7 +10,10 @@ from __future__ import annotations
 import copy
 import io
 import logging
+import os
+import re
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -42,10 +45,40 @@ COLUMN_FIELDS: dict[str, tuple[str, str]] = {
 }
 
 
+REOPENED_DIR = "_reopened"
+
+
+def user_folder(user: str) -> str:
+    """A user name made safe to use as a folder name."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", user).strip(" .") or "user"
+
+
 def evidence_path(output_dir: Path, page: Mapping[str, Any]) -> Path:
     stem = Path(page["filename"]).stem
     suffix = f"_p{page['page_number']}" if page["page_number"] else ""
-    return output_dir / "evidence" / page["user"] / f"{page['upload_id']}_{stem}{suffix}.pdf"
+    return output_dir / "evidence" / user_folder(page["user"]) / f"{page['upload_id']}_{stem}{suffix}.pdf"
+
+
+def archive_evidence(output_dir: Path, page: Mapping[str, Any]) -> Path | None:
+    """Move a reopened bill's submitted PDF to evidence/_reopened/<user>/.
+
+    The PDF no longer matches anything in the workbooks, so it should not sit
+    beside the submitted ones; it is kept (timestamped) rather than deleted.
+    Returns the archived path, or None when there was nothing to move.
+    """
+    saved = evidence_path(output_dir, page)
+    if not saved.is_file():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = output_dir / "evidence" / REOPENED_DIR / saved.parent.name / f"{saved.stem}_{stamp}{saved.suffix}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(saved, target)
+    return target
+
+
+def workbook_dir(output_dir: Path, user: str | None) -> Path:
+    """Where a set of workbooks goes: the output folder, or a user's folder in it."""
+    return output_dir if user is None else output_dir / user_folder(user)
 
 
 def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[Any]:
@@ -129,16 +162,18 @@ def apply_corrections(dataset: Mapping[str, Any], ocr_row: Mapping[str, Any], ro
     return result
 
 
-def write_workbooks(store: Store, output_dir: Path) -> list[str]:
-    """Rebuild both shared workbooks from submitted bills.
+def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> list[str]:
+    """Rebuild both workbooks from submitted bills.
 
-    Returns the names of workbooks that could not be replaced because they
-    are open in another program (they are rewritten on the next submit).
+    With ``user`` only that user's bills are written, into their own folder
+    (see ``workbook_dir``). Returns the names of workbooks that could not be
+    replaced because they are open in another program.
     """
-    submitted = list(store.pages(bills_only=True, submitted_only=True))
+    submitted = list(store.pages(user=user, bills_only=True, submitted_only=True))
     locked: list[str] = []
+    target_dir = workbook_dir(output_dir, user)
 
-    report = output_dir / "taipower_bills_17.xlsx"
+    report = target_dir / "taipower_bills_17.xlsx"
     if not save_tables(report, {"Bills": (REPORT_COLUMNS, [report_row(page, output_dir) for page in submitted])}):
         locked.append(report.name)
 
@@ -175,32 +210,37 @@ def write_workbooks(store: Store, output_dir: Path) -> list[str]:
             upload["filename"], "submitted", len(pages), 0,
             upload["processed_at"], 1, None,
         ])
-    master = output_dir / "taipower_bills.xlsx"
+    master = target_dir / "taipower_bills.xlsx"
     if not save_master(master, sheets):
         locked.append(master.name)
     return locked
 
 
 class WorkbookWriter:
-    """Rebuilds the shared workbooks one request at a time.
+    """Rebuilds the workbooks one request at a time.
 
     Simultaneous submits would otherwise race on the same files. When a
     workbook is open in Excel the write is retried every ``retry_seconds``
     in the background, so it does not wait for the next submit.
+
+    With ``per_user`` each user's workbooks are written separately; ``write``
+    is then given the user whose bills changed.
     """
 
-    def __init__(self, store: Store, output_dir: Path, retry_seconds: float = 60) -> None:
+    def __init__(self, store: Store, output_dir: Path, retry_seconds: float = 60, per_user: bool = False) -> None:
         self.store = store
         self.output_dir = output_dir
         self.retry_seconds = retry_seconds
+        self.per_user = per_user
         self._lock = threading.Lock()
-        self._pending = threading.Event()
+        # Workbook sets still to write: None (shared) or a user name.
+        self._pending: set[str | None] = set()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._retry_loop, name="workbook-retry", daemon=True)
 
     @property
     def pending(self) -> bool:
-        return self._pending.is_set()
+        return bool(self._pending)
 
     def start(self) -> None:
         self._thread.start()
@@ -208,21 +248,22 @@ class WorkbookWriter:
     def stop(self) -> None:
         self._stop.set()
 
-    def write(self) -> list[str]:
-        """Rebuild both workbooks now; returns the ones that were locked."""
+    def write(self, user: str | None = None) -> list[str]:
+        """Rebuild the workbooks now; returns the ones that were locked."""
+        key = user if self.per_user else None
         with self._lock:
-            locked = write_workbooks(self.store, self.output_dir)
+            locked = write_workbooks(self.store, self.output_dir, key)
             if locked:
-                self._pending.set()
+                self._pending.add(key)
                 log.warning("%s open elsewhere; retrying every %ss", ", ".join(locked), self.retry_seconds)
             else:
-                self._pending.clear()
+                self._pending.discard(key)
             return locked
 
     def _retry_loop(self) -> None:
         while not self._stop.wait(self.retry_seconds):
-            if self._pending.is_set():
+            for key in list(self._pending):
                 try:
-                    self.write()
+                    self.write(key)
                 except Exception:  # noqa: BLE001 - keep retrying
                     log.exception("Retrying the workbooks failed")

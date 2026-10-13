@@ -44,9 +44,18 @@ datas += collect_data_files("pdfminer")
 hiddenimports += collect_submodules("winrt")
 datas += copy_metadata("taipower-bill-ocr")
 
+# The web app (TaipowerBillOCRWeb.exe): uvicorn picks its protocol modules
+# by name, reportlab draws the evidence PDFs, and the built pages are data.
+hiddenimports += collect_submodules("taipower_web_api") + collect_submodules("uvicorn")
+datas += collect_data_files("reportlab")
+WEB_DIST = ROOT / "apps" / "web" / "dist"
+if not (WEB_DIST / "index.html").is_file():
+    raise SystemExit("apps/web/dist is missing: run `npm run build` first")
+datas += [(str(WEB_DIST), "web")]
+
 a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
-    pathex=[str(ROOT / "src")],
+    pathex=[str(ROOT / "src"), str(ROOT / "apps" / "api" / "src")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -66,8 +75,21 @@ exe = EXE(
     upx=False,
 )
 
+# Same program, with a console window: it shows the address and keeps the
+# local web server running until it is closed.
+exe_web = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="TaipowerBillOCRWeb",
+    console=True,
+    upx=False,
+)
+
 coll = COLLECT(
     exe,
+    exe_web,
     a.binaries,
     a.datas,
     upx=False,

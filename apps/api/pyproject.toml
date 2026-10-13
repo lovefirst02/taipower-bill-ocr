@@ -18,6 +18,8 @@ dependencies = [
 
 [project.scripts]
 taipower-web = "taipower_web_api.main:run"
+# The same app on one PC, no server: opens the browser, per-user workbooks.
+taipower-web-local = "taipower_web_api.desktop:main"
 
 [dependency-groups]
 test = ["httpx>=0.27"]

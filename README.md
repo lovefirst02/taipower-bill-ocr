@@ -381,7 +381,8 @@ powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
 產出 `dist\TaipowerBillOCR\`（約 650 MB）與 `dist\TaipowerBillOCR-<版本>.zip`（約 250 MB）。建置使用獨立的
 `.venv-build`，不會更動日常使用的 `.venv`。
 
-使用者端：解壓縮後執行 `TaipowerBillOCR.exe`，不需安裝 Python。PaddleOCR 模型已內含於 `models\`，可離線使用；
+使用者端：解壓縮後執行 `TaipowerBillOCR.exe`（Tk 桌面程式）或 `TaipowerBillOCRWeb.exe`（單機版網頁，見
+「網頁版」的〈沒有伺服器時：單機版〉），不需安裝 Python。PaddleOCR 模型已內含於 `models\`，可離線使用；
 交叉檢查同樣需要 Windows 的繁體中文 OCR 功能。紀錄與錯誤報告存於 `%LOCALAPPDATA%\TaipowerBillOCR\`。
 
 在新電腦上確認 exe 可用（不開視窗，結果寫入 `%LOCALAPPDATA%\TaipowerBillOCR\self_test.json`）：
@@ -515,6 +516,8 @@ npm test           # 前端與後端測試
    完整總表的 `Pages` 也記錄 `uploaded_by`、`submitted_by` 與 `submitted_at`（資料夾監看程式產生的帳單這三欄為空）。
    兩個 Excel 由伺服器依資料庫整份重建，同一時間只有一個寫入（同時送出不會互相覆蓋）；檔案被 Excel 開啟時會提示，並在背景每 60 秒重試（`TAIPOWER_WORKBOOK_RETRY_SECONDS`），不必等下一次送出。
    放在 SharePoint 時請將這兩個 Excel 設為唯讀：直接在 Excel 修改的內容會在下一次送出時被覆蓋，需要修改請在網頁上按「Reopen」後重新送出。
+   按「Reopen」時，該帳單會從兩個 Excel 移除，舊的證據 PDF 移到 `evidence\_reopened\<名字>\`（檔名加上時間），
+   不會刪除；重新送出後產生新的證據 PDF。
 6. 「Download all PDFs」把自己所有帳單的證據 PDF 打包成一個 ZIP：`submitted/` 是送出時存下的版本，
    `draft/` 依目前的標記產生。「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
 
@@ -526,6 +529,30 @@ npm test           # 前端與後端測試
 | `TAIPOWER_OUTPUT_DIR` | `data/output` | 兩個共用 Excel 與 `evidence\`；可設為 OneDrive 同步的 SharePoint 資料夾 |
 | `TAIPOWER_OCR_BACKEND` | `crosscheck` | 或 `paddleocr`、`windows` |
 | `TAIPOWER_DPI` | `200` | PDF 轉圖解析度 |
+| `TAIPOWER_WORKBOOKS` | `shared` | `shared`：所有人一份共用 Excel；`per_user`：每人一份，寫在 `<輸出資料夾>\<名字>\` |
+
+### 沒有伺服器時：單機版
+
+同一套網頁程式也能只在自己的電腦上執行，不需要伺服器；介面、證據標記與送出流程都和伺服器版相同。
+
+```powershell
+TaipowerBillOCRWeb.exe                    # exe（不需 Python）
+uv run taipower-web-local                 # 或用 uv（需先 npm run build）
+```
+
+- 第一次執行會跳出資料夾選擇視窗，選擇送出結果要存放的位置（例如 OneDrive 同步的 SharePoint 資料夾），之後會記住；
+  要更換時加上 `--choose-output`，或用 `--output <資料夾>` 直接指定。
+- 程式會自動開啟瀏覽器（`http://127.0.0.1:8765`）；黑色視窗保持開啟即可使用，關閉視窗就結束。
+  已經在執行時再開一次，只會再開一個瀏覽器分頁。
+- 上傳檔與資料庫存在 `%LOCALAPPDATA%\TaipowerBillOCR\web\`，只在這台電腦。
+- **每人一份 Excel**：送出的結果寫在 `<輸出資料夾>\<名字>\taipower_bills_17.xlsx` 與 `taipower_bills.xlsx`，
+  證據 PDF 在 `<輸出資料夾>\evidence\<名字>\`。多台電腦存到同一個 SharePoint 資料夾時，每台只寫自己的檔案，
+  不會互相衝突。請每個人使用不同的名字。
+- 合併所有人的結果：用 Power Query「從資料夾」讀取，只讀不寫。範例在 `examples/power_query/`：
+  `combine_users.pq`（17 欄表）與 `combine_master.pq`（完整總表的 Pages／Fields／TableRows／Files）。
+
+日後架設伺服器時，把同一套程式部署上去（`TAIPOWER_WORKBOOKS` 可維持 `per_user`，讓合併方式不變，或改回 `shared`），
+使用方式不變。
 
 紅色粗體字使用 Windows 內建的 Arial Bold，標籤含中文時改用微軟正黑體粗體。圖片上傳的證據 PDF 以高品質 JPEG 內嵌（約為無損的 1/6 大小）。後端需在 Windows 上執行
 （Windows OCR 交叉檢查）。

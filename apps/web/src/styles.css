@@ -48,6 +48,8 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .app { display: flex; flex-direction: column; height: 100vh; }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .topbar h1 { font-size: 17px; }
+.brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.output { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions { display: flex; gap: 8px; }
 .user { background: #eef2f7; }
 .layout { display: flex; flex: 1; min-height: 0; }

@@ -67,7 +67,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
       const locked = result.locked_workbooks ?? [];
       setMessage(
         locked.length
-          ? { kind: "warn", text: `${done}, but ${locked.join(" and ")} is open in Excel — it will be updated on the next submit.` }
+          ? { kind: "warn", text: `${done}, but ${locked.join(" and ")} is open in Excel — it is updated automatically once the file is closed.` }
           : { kind: "ok", text: done },
       );
       onChanged();
@@ -82,13 +82,17 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
 
   const save = () => run(() => api.save(itemId, user, row, marks), "Draft saved");
   const submit = async () => {
-    const result = await run(() => api.submit(itemId, user, row, marks), "Submitted — saved to the shared Excel files with its evidence PDF");
+    const result = await run(() => api.submit(itemId, user, row, marks), "Submitted — saved to the Excel files with its evidence PDF");
     if (result && !(result.locked_workbooks ?? []).length) {
-      onNotify(`${item?.filename ?? "Bill"} submitted — saved to the shared Excel files with its evidence PDF.`);
+      onNotify(`${item?.filename ?? "Bill"} submitted — saved to the Excel files with its evidence PDF.`);
       onNext();
     }
   };
-  const reopen = () => run(() => api.reopen(itemId, user), "Reopened for editing");
+  const reopen = () =>
+    run(
+      () => api.reopen(itemId, user),
+      "Reopened for editing — removed from the Excel files; the old evidence PDF was moved to evidence/_reopened",
+    );
   // Only the marks go back to the OCR positions; unsaved field edits stay.
   const reset = async () => {
     setBusy(true);

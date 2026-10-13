@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Review } from "./components/Review";
 import { BillList, Dropzone, UploadQueue } from "./components/Sidebar";
-import type { Column, ItemSummary, Upload } from "./types";
+import type { Column, ItemSummary, OutputInfo, Upload } from "./types";
 
 const USER_KEY = "taipower-user";
 
@@ -44,6 +44,7 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [output, setOutput] = useState<OutputInfo | null>(null);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -55,6 +56,10 @@ export default function App() {
   useEffect(() => {
     api.columns().then(setColumns).catch(() => setNotice("Cannot reach the server."));
   }, []);
+
+  useEffect(() => {
+    if (user) api.output(user).then(setOutput).catch(() => setOutput(null));
+  }, [user]);
 
   useEffect(() => {
     setSelected(null);
@@ -117,7 +122,14 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Taipower Bill OCR</h1>
+        <div className="brand">
+          <h1>Taipower Bill OCR</h1>
+          {output && (
+            <span className="output" title={`Evidence PDFs: ${output.evidence_folder}`}>
+              Submitted results go to {output.folder}
+            </span>
+          )}
+        </div>
         <div className="topbar-actions">
           <a
             className="button"
@@ -157,7 +169,7 @@ export default function App() {
           ) : (
             <div className="welcome">
               <h2>Drop Taipower bills on the left</h2>
-              <p>Each bill is read automatically. Check the values, adjust the evidence marks, and submit — results go to the shared Excel files, with a marked-up PDF for each bill.</p>
+              <p>Each bill is read automatically. Check the values, adjust the evidence marks, and submit — results go to the Excel files, with a marked-up PDF for each bill.</p>
             </div>
           )}
         </main>

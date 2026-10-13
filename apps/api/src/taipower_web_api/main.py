@@ -25,7 +25,7 @@ from taipower_bill_ocr.excel_export import (
 )
 
 from . import evidence
-from .reports import WorkbookWriter, evidence_path, export_workbook
+from .reports import WorkbookWriter, archive_evidence, evidence_path, export_workbook, workbook_dir
 from .settings import Settings
 from .store import Store, now
 from .worker import OcrWorker
@@ -72,7 +72,7 @@ def create_app(
     settings = settings or Settings.from_env()
     store = Store(settings.database)
     worker = OcrWorker(store, settings, extractor_factory)
-    writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds)
+    writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds, settings.per_user_workbooks)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -227,16 +227,22 @@ def create_app(
         target.write_bytes(
             evidence.pdf_bytes(Path(page["path"]), page["page_number"], page_image(page), settings.dpi, marks_of(page))
         )
-        locked = writer.write()
+        locked = writer.write(page["user"])
         return {**item(page_id), "evidence_file": str(target), "locked_workbooks": locked}
 
     @app.post("/api/items/{page_id}/reopen")
     def reopen(page_id: int, update: ItemUpdate) -> dict[str, Any]:
-        page_or_404(page_id)
+        page = page_or_404(page_id)
         _clean_user(update.user)
+        archived = None
+        if page["status"] == "submitted":
+            try:
+                archived = archive_evidence(settings.output_dir, page)
+            except PermissionError:
+                raise HTTPException(409, "the evidence PDF is open in another program; close it and try again")
         store.update_page(page_id, status="draft", submitted_at=None, submitted_by=None)
-        locked = writer.write()
-        return {**item(page_id), "locked_workbooks": locked}
+        locked = writer.write(page["user"])
+        return {**item(page_id), "locked_workbooks": locked, "archived_evidence": str(archived) if archived else None}
 
     @app.post("/api/items/{page_id}/reset-marks")
     def reset_marks(page_id: int) -> dict[str, Any]:
@@ -314,7 +320,23 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"ok": True, "label_font": str(evidence.label_font_path()), "output_dir": str(settings.output_dir)}
+        return {
+            "ok": True,
+            "label_font": str(evidence.label_font_path()),
+            "output_dir": str(settings.output_dir),
+            "workbooks": settings.workbooks,
+        }
+
+    @app.get("/api/output")
+    def output(user: str) -> dict[str, Any]:
+        """Where this user's submitted results are saved."""
+        user = _clean_user(user)
+        folder = workbook_dir(settings.output_dir, user if settings.per_user_workbooks else None)
+        return {
+            "workbooks": settings.workbooks,
+            "folder": str(folder),
+            "evidence_folder": str(evidence_path(settings.output_dir, {"filename": "x", "page_number": 0, "upload_id": 0, "user": user}).parent),
+        }
 
     # The built web app is served from the same origin in production.
     if settings.web_dist.is_dir():

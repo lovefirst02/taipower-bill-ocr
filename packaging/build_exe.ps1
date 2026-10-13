@@ -8,8 +8,19 @@ Set-Location $root
 $env:UV_PROJECT_ENVIRONMENT = ".venv-build"
 if (-not $env:SKIP_SYNC) {
     Write-Host "==> Syncing build environment"
-    uv sync --frozen --extra app --group build
+    uv sync --frozen --all-packages --extra app --group build
     if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+}
+
+# The web app's pages; an existing build is used when npm is not installed.
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+    Write-Host "==> Building the web pages"
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+} elseif (-not (Test-Path "apps\web\dist\index.html")) {
+    throw "npm is needed once to build apps\web\dist"
 }
 
 $detModel = "PP-OCRv6_small_det"

@@ -81,5 +81,12 @@ export interface Item {
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];
+  archived_evidence?: string | null;
   evidence_file?: string;
+}
+
+export interface OutputInfo {
+  workbooks: "shared" | "per_user";
+  folder: string;
+  evidence_folder: string;
 }
