@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS uploads (
     filename TEXT NOT NULL,
     path TEXT NOT NULL,
     sha256 TEXT NOT NULL,
-    status TEXT NOT NULL,            -- queued | processing | done | failed
+    status TEXT NOT NULL,            -- queued | processing | paused | done | failed
     error TEXT,
     page_count INTEGER,
     pages_done INTEGER NOT NULL DEFAULT 0,
@@ -124,6 +124,10 @@ class Store:
         rows = self._query("SELECT id FROM uploads WHERE status IN ('queued', 'processing') ORDER BY id")
         return [row["id"] for row in rows]
 
+    def delete_upload(self, upload_id: int) -> None:
+        self.delete_pages(upload_id)
+        self._execute("DELETE FROM uploads WHERE id = ?", (upload_id,))
+
     def set_upload(self, upload_id: int, **values: Any) -> None:
         assignments = ", ".join(f"{key} = :{key}" for key in values)
         self._execute(f"UPDATE uploads SET {assignments} WHERE id = :id", {**values, "id": upload_id})
@@ -138,6 +142,11 @@ class Store:
 
     def delete_pages(self, upload_id: int) -> None:
         self._execute("DELETE FROM pages WHERE upload_id = ?", (upload_id,))
+
+    def page_numbers(self, upload_id: int) -> set[int | None]:
+        """Pages of an upload already read (None for an image)."""
+        rows = self._query("SELECT page_number FROM pages WHERE upload_id = ?", (upload_id,))
+        return {row["page_number"] for row in rows}
 
     def page(self, page_id: int) -> dict[str, Any] | None:
         rows = self._query(

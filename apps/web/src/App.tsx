@@ -95,6 +95,22 @@ export default function App() {
     setEditingUser(false);
   };
 
+  const queueAction = async (action: () => Promise<unknown>) => {
+    setNotice(null);
+    try {
+      await action();
+    } catch (error) {
+      setNotice((error as Error).message);
+    }
+    await refresh();
+  };
+  const removeUpload = (id: number) => {
+    const name = uploads.find((upload) => upload.id === id)?.filename ?? "this file";
+    if (window.confirm(`Remove ${name} from the queue? Pages already read are discarded.`)) {
+      void queueAction(() => api.removeUpload(id, user));
+    }
+  };
+
   const upload = async (files: File[]) => {
     setUploading(true);
     setNotice(null);
@@ -152,7 +168,13 @@ export default function App() {
         <nav className="sidebar">
           <Dropzone onFiles={upload} busy={uploading} />
           {notice && <p className="notice">{notice}</p>}
-          <UploadQueue uploads={uploads} />
+          <UploadQueue
+            uploads={uploads}
+            onPause={() => void queueAction(() => api.pauseUploads(user))}
+            onResume={() => void queueAction(() => api.resumeUploads(user))}
+            onRetry={(id) => void queueAction(() => api.retryUpload(id, user))}
+            onRemove={removeUpload}
+          />
           <BillList items={items} selectedId={selected} onSelect={setSelected} />
         </nav>
         <main>

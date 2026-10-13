@@ -1,4 +1,9 @@
-"""Background OCR: one upload at a time, loading the OCR model only once."""
+"""Background OCR: one upload at a time, loading the OCR model only once.
+
+Users can pause their own uploads: queued ones wait, and the one being read
+stops after its current page. Pages already read are kept, so resuming (or
+retrying a failed upload, or restarting the server) reads only the rest.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from taipower_bill_ocr.batch import FileFinished, FileStarted, PageDone, PageExtractor, iter_batch, render_page
+from taipower_bill_ocr.batch import (
+    PDF_SUFFIXES,
+    FileFinished,
+    FileStarted,
+    PageDone,
+    PageExtractor,
+    count_pages,
+    iter_batch,
+    render_page,
+)
 from taipower_bill_ocr.dataset import page_record
 
 from .evidence import default_marks
@@ -35,6 +49,10 @@ class OcrWorker:
         self._extractor: Any | None = None
         self._queue: queue.Queue[int | None] = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="ocr-worker", daemon=True)
+        # The upload being read, and the flag that stops it between pages.
+        self._current: int | None = None
+        self._cancel = threading.Event()
+        self._state = threading.Lock()
 
     def start(self) -> None:
         # Uploads interrupted by a restart are processed again.
@@ -47,6 +65,38 @@ class OcrWorker:
 
     def submit(self, upload_id: int) -> None:
         self._queue.put(upload_id)
+
+    def pause(self, user: str) -> int:
+        """Pause a user's waiting uploads and stop theirs being read; returns how many."""
+        paused = 0
+        with self._state:
+            for upload in self.store.uploads(user):
+                if upload["status"] == "queued":
+                    self.store.set_upload(upload["id"], status="paused")
+                    paused += 1
+                elif upload["status"] == "processing" and upload["id"] == self._current:
+                    self._cancel.set()  # marked paused once the current page is stored
+                    paused += 1
+        return paused
+
+    def resume(self, user: str) -> int:
+        """Queue a user's paused uploads again; returns how many."""
+        resumed = 0
+        with self._state:
+            for upload in reversed(self.store.uploads(user)):  # oldest first
+                if upload["status"] == "paused":
+                    self.store.set_upload(upload["id"], status="queued")
+                    self._queue.put(upload["id"])
+                    resumed += 1
+        return resumed
+
+    def retry(self, upload_id: int) -> None:
+        with self._state:
+            self.store.set_upload(upload_id, status="queued", error=None)
+            self._queue.put(upload_id)
+
+    def is_current(self, upload_id: int) -> bool:
+        return self._current == upload_id
 
     def wait_idle(self, timeout: float = 600) -> None:
         """Block until queued uploads are done (used by tests and scripts)."""
@@ -71,24 +121,42 @@ class OcrWorker:
             if upload_id == -1:
                 self._idle_marker.set()
                 continue
+            with self._state:
+                upload = self.store.upload(upload_id)
+                # Paused, removed, or already read (queued twice).
+                if upload is None or upload["status"] not in {"queued", "processing"}:
+                    continue
+                self._current = upload_id
+                self._cancel.clear()
             try:
                 self.process(upload_id)
             except Exception as exc:  # noqa: BLE001 - keep the worker alive
                 log.exception("Upload %s failed", upload_id)
                 self.store.set_upload(upload_id, status="failed", error=f"{type(exc).__name__}: {exc}")
+            finally:
+                with self._state:
+                    self._current = None
 
     def process(self, upload_id: int) -> None:
         upload = self.store.upload(upload_id)
         if upload is None:
             return
         path = Path(upload["path"])
-        self.store.delete_pages(upload_id)
-        self.store.set_upload(upload_id, status="processing", error=None, pages_done=0)
-        done = 0
+        # Pages read before a pause, failure or restart are kept.
+        read = self.store.page_numbers(upload_id)
+        done = len(read)
+        self.store.set_upload(upload_id, status="processing", error=None, pages_done=done)
+        remaining: list[int] | None = None
+        if read and path.suffix.lower() in PDF_SUFFIXES:
+            remaining = [number for number in range(1, count_pages(path) + 1) if number not in read]
+        if read and not remaining:
+            self.store.set_upload(upload_id, status="done", processed_at=datetime.now().isoformat(timespec="seconds"))
+            return
         errors: list[str] = []
         for event in iter_batch(
-            [path], self.extractor,
+            [path], self.extractor, self._cancel,
             source_name=lambda _: upload["filename"],
+            page_numbers=remaining,
             cross_check_all_pages=True,
         ):
             if isinstance(event, FileStarted):
@@ -99,6 +167,9 @@ class OcrWorker:
                 self.store.set_upload(upload_id, pages_done=done)
             elif isinstance(event, FileFinished) and event.error:
                 errors.append(event.error)
+        if self._cancel.is_set():
+            self.store.set_upload(upload_id, status="paused")
+            return
         self.store.set_upload(
             upload_id,
             status="failed" if errors else "done",

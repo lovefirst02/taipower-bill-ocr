@@ -38,7 +38,7 @@ export interface Issue {
 export interface Upload {
   id: number;
   filename: string;
-  status: "queued" | "processing" | "done" | "failed";
+  status: "queued" | "processing" | "paused" | "done" | "failed";
   error: string | null;
   page_count: number | null;
   pages_done: number;

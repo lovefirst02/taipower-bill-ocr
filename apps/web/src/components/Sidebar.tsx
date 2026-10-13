@@ -42,27 +42,52 @@ export function Dropzone({ onFiles, busy }: { onFiles: (files: File[]) => void; 
   );
 }
 
-export function UploadQueue({ uploads }: { uploads: Upload[] }) {
-  const active = uploads.filter((upload) => upload.status === "queued" || upload.status === "processing" || upload.status === "failed");
+type QueueActions = {
+  onPause: () => void;
+  onResume: () => void;
+  onRetry: (id: number) => void;
+  onRemove: (id: number) => void;
+};
+
+export function UploadQueue({ uploads, onPause, onResume, onRetry, onRemove }: { uploads: Upload[] } & QueueActions) {
+  const active = uploads.filter((upload) => upload.status !== "done");
   if (!active.length) return null;
+  const running = active.some((upload) => upload.status === "queued" || upload.status === "processing");
+  const paused = active.some((upload) => upload.status === "paused");
   return (
     <section className="queue">
-      <h3>Processing</h3>
+      <div className="queue-head">
+        <h3>{running ? "Processing" : paused ? "Paused" : "Not processed"}</h3>
+        {running && <button className="link" onClick={onPause} title="Stops after the page being read">Pause</button>}
+        {!running && paused && <button className="link" onClick={onResume}>Resume</button>}
+      </div>
       <ul>
         {active.map((upload) => {
           const total = upload.page_count ?? 0;
           const percent = total ? Math.round((upload.pages_done / total) * 100) : 0;
+          const removable = upload.status !== "processing";
           return (
             <li key={upload.id} className={upload.status}>
               <span className="name" title={upload.filename}>{upload.filename}</span>
               {upload.status === "failed" ? (
-                <span className="error" title={upload.error ?? ""}>Failed</span>
+                <span className="error" title={upload.error ?? ""}>
+                  Failed <button className="link" onClick={() => onRetry(upload.id)}>Retry</button>
+                </span>
               ) : (
                 <>
                   <span className="progress"><span style={{ width: `${upload.status === "queued" ? 0 : percent}%` }} /></span>
-                  <span className="state">{upload.status === "queued" ? "Queued" : total ? `${upload.pages_done}/${total}` : "Reading…"}</span>
+                  <span className="state">
+                    {upload.status === "queued"
+                      ? "Queued"
+                      : upload.status === "paused"
+                        ? total ? `Paused ${upload.pages_done}/${total}` : "Paused"
+                        : total ? `${upload.pages_done}/${total}` : "Reading…"}
+                  </span>
                 </>
               )}
+              {removable ? (
+                <button className="icon" onClick={() => onRemove(upload.id)} title="Remove from the queue" aria-label={`Remove ${upload.filename}`}>✕</button>
+              ) : <span />}
             </li>
           );
         })}

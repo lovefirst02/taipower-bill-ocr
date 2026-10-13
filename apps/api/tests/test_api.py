@@ -55,6 +55,17 @@ def png_bytes(size=(1654, 2339)):
     return buffer.getvalue()
 
 
+def three_page_pdf():
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(3):
+        writer.add_blank_page(width=595, height=842)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -327,6 +338,77 @@ class ApiTests(unittest.TestCase):
         item_id = self.first_item("../Amy")["id"]
         saved = Path(self.client.post(f"/api/items/{item_id}/submit", json={"user": "../Amy"}).json()["evidence_file"])
         self.assertEqual(saved.parent.parent, self.settings.evidence_dir)
+
+    def uploads_of(self, user):
+        return {upload["filename"]: upload for upload in self.client.get("/api/uploads", params={"user": user}).json()}
+
+    def test_pause_stops_after_the_current_page_and_resume_reads_the_rest(self):
+        import threading
+        import time
+
+        started, proceed, read = threading.Event(), threading.Event(), []
+
+        def extract(self_, path, page):
+            read.append((Path(path).suffix, page))
+            if page == 1:
+                started.set()
+                proceed.wait(10)
+            return official_sample_bill()
+
+        with mock.patch.object(FakeExtractor, "extract", extract):
+            files = [("files", ("three.pdf", three_page_pdf(), "application/pdf")), ("files", ("later.png", png_bytes(), "image/png"))]
+            self.client.post("/api/uploads", data={"user": "Amy"}, files=files)
+            self.assertTrue(started.wait(10))
+            self.assertEqual(self.client.post("/api/uploads/pause", json={"user": "Amy"}).json(), {"paused": 2})
+            proceed.set()
+            deadline = time.time() + 10
+            while self.uploads_of("Amy")["three.pdf"]["status"] != "paused" and time.time() < deadline:
+                time.sleep(0.05)
+            self.app.state.worker.wait_idle(10)
+            uploads = self.uploads_of("Amy")
+            self.assertEqual((uploads["three.pdf"]["status"], uploads["three.pdf"]["pages_done"]), ("paused", 1))
+            self.assertEqual(uploads["later.png"]["status"], "paused")
+            self.assertEqual(read, [(".pdf", 1)])
+
+            self.assertEqual(self.client.post("/api/uploads/resume", json={"user": "Amy"}).json(), {"resumed": 2})
+            self.app.state.worker.wait_idle(10)
+        uploads = self.uploads_of("Amy")
+        self.assertEqual((uploads["three.pdf"]["status"], uploads["three.pdf"]["pages_done"]), ("done", 3))
+        self.assertEqual(uploads["later.png"]["status"], "done")
+        # Page 1 was not read again.
+        self.assertEqual(read, [(".pdf", 1), (".pdf", 2), (".pdf", 3), (".png", None)])
+        self.assertEqual(len(self.client.get("/api/items", params={"user": "Amy"}).json()), 4)
+
+    def test_pausing_does_not_touch_other_users_uploads(self):
+        with mock.patch.object(self.app.state.worker, "submit"):  # keep everything queued
+            self.upload("Amy", "a.png")
+            self.client.post("/api/uploads", data={"user": "Ben"}, files=[("files", ("b.png", png_bytes(), "image/png"))])
+        self.client.post("/api/uploads/pause", json={"user": "Amy"})
+        self.assertEqual(self.uploads_of("Amy")["a.png"]["status"], "paused")
+        self.assertEqual(self.uploads_of("Ben")["b.png"]["status"], "queued")
+
+    def test_failed_upload_can_be_retried_or_removed(self):
+        def broken(self_, path, page):
+            raise RuntimeError("cannot read")
+
+        with mock.patch.object(FakeExtractor, "extract", broken):
+            self.upload("Amy", "bad.png", "worse.png")
+        uploads = self.uploads_of("Amy")
+        self.assertEqual({u["status"] for u in uploads.values()}, {"failed"})
+
+        retried = self.client.post(f"/api/uploads/{uploads['bad.png']['id']}/retry", json={"user": "Amy"})
+        self.assertEqual(retried.json()["status"], "queued")
+        self.app.state.worker.wait_idle(10)
+        self.assertEqual(self.uploads_of("Amy")["bad.png"]["status"], "done")
+
+        stored = Path(self.app.state.store.upload(uploads["worse.png"]["id"])["path"])
+        self.assertEqual(self.client.delete(f"/api/uploads/{uploads['worse.png']['id']}", params={"user": "Ben"}).status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/uploads/{uploads['worse.png']['id']}", params={"user": "Amy"}).status_code, 200)
+        self.assertNotIn("worse.png", self.uploads_of("Amy"))
+        self.assertFalse(stored.exists())
+        # A finished upload stays with its bills.
+        self.assertEqual(self.client.delete(f"/api/uploads/{uploads['bad.png']['id']}", params={"user": "Amy"}).status_code, 409)
+        self.assertEqual(self.client.post(f"/api/uploads/{uploads['bad.png']['id']}/retry", json={"user": "Amy"}).status_code, 409)
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

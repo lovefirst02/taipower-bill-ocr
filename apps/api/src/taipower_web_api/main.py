@@ -134,6 +134,41 @@ def create_app(
             accepted.append({"id": upload_id, "filename": name})
         return {"accepted": accepted, "rejected": rejected}
 
+    def own_upload(upload_id: int, user: str) -> dict[str, Any]:
+        found = store.upload(upload_id)
+        if found is None or found["user"] != _clean_user(user):
+            raise HTTPException(404, "upload not found")
+        return found
+
+    @app.post("/api/uploads/pause")
+    def pause(update: ItemUpdate) -> dict[str, Any]:
+        """Pause the user's uploads; the one being read stops after its current page."""
+        return {"paused": worker.pause(_clean_user(update.user))}
+
+    @app.post("/api/uploads/resume")
+    def resume(update: ItemUpdate) -> dict[str, Any]:
+        return {"resumed": worker.resume(_clean_user(update.user))}
+
+    @app.post("/api/uploads/{upload_id}/retry")
+    def retry(upload_id: int, update: ItemUpdate) -> dict[str, Any]:
+        found = own_upload(upload_id, update.user)
+        if found["status"] != "failed":
+            raise HTTPException(409, "only a failed upload can be retried")
+        worker.retry(upload_id)
+        return {"id": upload_id, "status": "queued"}
+
+    @app.delete("/api/uploads/{upload_id}")
+    def remove(upload_id: int, user: str) -> dict[str, Any]:
+        """Remove an upload that is waiting, paused or failed, with its pages."""
+        found = own_upload(upload_id, user)
+        if found["status"] == "processing" or worker.is_current(upload_id):
+            raise HTTPException(409, "it is being read; pause first")
+        if found["status"] == "done":
+            raise HTTPException(409, "finished uploads stay with their bills")
+        store.delete_upload(upload_id)
+        Path(found["path"]).unlink(missing_ok=True)
+        return {"removed": upload_id}
+
     @app.get("/api/uploads")
     def uploads(user: str) -> list[dict[str, Any]]:
         return [

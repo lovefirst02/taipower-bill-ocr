@@ -61,12 +61,17 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .notice { margin: 0; color: var(--warn); font-size: 13px; }
 .queue h3, .bills h3 { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .queue ul, .bills ul { list-style: none; margin: 0; padding: 0; }
-.queue li { display: grid; grid-template-columns: 1fr 70px 48px; gap: 6px; align-items: center; font-size: 12px; padding: 3px 0; }
+.queue-head { display: flex; align-items: baseline; justify-content: space-between; }
+.queue-head h3 { margin-bottom: 6px; }
+.queue li { display: grid; grid-template-columns: 1fr 70px 72px 22px; gap: 6px; align-items: center; font-size: 12px; padding: 3px 0; }
+.queue li button.icon { padding: 0 4px; font-size: 11px; }
+.queue li button.icon:hover { color: var(--danger); }
+.queue .error button.link { font-size: 12px; padding: 0 2px; }
 .queue .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue .progress { height: 6px; background: #e6e9ee; border-radius: 3px; overflow: hidden; }
 .queue .progress span { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
 .queue .state { color: var(--muted); text-align: right; }
-.queue .error { color: var(--danger); grid-column: 2 / 4; text-align: right; }
+.queue .error { color: var(--danger); grid-column: 2 / 4; text-align: right; white-space: nowrap; }
 .filters { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .filters button { padding: 3px 8px; font-size: 12px; border-radius: 12px; }
 .filters button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
