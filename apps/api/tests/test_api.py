@@ -522,6 +522,16 @@ class ApiTests(unittest.TestCase):
         self.app.state.store.set_upload(self.app.state.store.page(item_id)["upload_id"], status="processing")
         self.assertEqual(self.client.post("/api/items/delete", json={"user": "Amy", "ids": [item_id]}).status_code, 409)
 
+    def test_chinese_file_name_downloads(self):
+        from urllib.parse import unquote
+
+        self.upload("Amy", "台電帳單.png")
+        response = self.client.get(f"/api/items/{self.first_item('Amy')['id']}/evidence.pdf")
+        self.assertEqual(response.status_code, 200)
+        header = response.headers["content-disposition"]
+        self.assertIn('filename="', header)
+        self.assertTrue(unquote(header.split("filename*=UTF-8''")[1]).endswith("台電帳單.pdf"))
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

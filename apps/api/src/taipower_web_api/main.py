@@ -66,6 +66,19 @@ def _clean_user(user: str) -> str:
     return user
 
 
+def _attachment(name: str) -> dict[str, str]:
+    """A download header for any file name.
+
+    Header values must be Latin-1, so a name with Chinese characters is sent
+    UTF-8 encoded (RFC 6266 ``filename*``) with an ASCII fallback.
+    """
+    from urllib.parse import quote
+
+    stem, suffix = Path(name).stem, Path(name).suffix
+    fallback = (re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "download") + suffix
+    return {"Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name)}"}
+
+
 def _safe_name(filename: str) -> str:
     name = Path(filename).name
     return re.sub(r"[^\w.\- ()㐀-鿿]", "_", name) or "upload"
@@ -390,7 +403,7 @@ def create_app(
         page = page_or_404(page_id)
         content = build_evidence_pdf(page)
         name = Path(evidence_path(settings.output_dir, page)).name
-        return Response(content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+        return Response(content, media_type="application/pdf", headers=_attachment(name))
 
     # ---------------------------------------------------------------- export
     @app.get("/api/evidence.zip")
@@ -420,7 +433,7 @@ def create_app(
         return Response(
             buffer.getvalue(),
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+            headers=_attachment(name),
         )
 
     @app.get("/api/export.xlsx")
@@ -429,7 +442,7 @@ def create_app(
         return Response(
             export_workbook(pages),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename="taipower_bills_mine.xlsx"'},
+            headers=_attachment("taipower_bills_mine.xlsx"),
         )
 
     @app.get("/api/health")
