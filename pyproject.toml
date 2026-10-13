@@ -28,6 +28,9 @@ excel = ["openpyxl>=3.1"]
 # Everything the desktop app needs: uv sync --extra app
 app = ["taipower-bill-ocr[excel,paddleocr]"]
 
+[project.scripts]
+taipower-bill-watch = "taipower_bill_ocr.watcher:main"
+
 [project.gui-scripts]
 taipower-bill-gui = "taipower_bill_ocr.gui:main"
 

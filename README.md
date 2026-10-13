@@ -389,3 +389,34 @@ powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
 ```powershell
 .\TaipowerBillOCR.exe --self-test C:\path\to\bill.pdf
 ```
+
+## SharePoint 資料夾自動處理（OneDrive 同步）
+
+在一台常開的 Windows 電腦上，用 OneDrive 把 SharePoint 資料夾同步到本機（文件庫上方的「同步」或
+「新增捷徑到我的檔案」），再讓程式監看該資料夾。新的或內容有變動的 PDF／圖片會自動 OCR，結果寫入
+輸出資料夾的 `taipower_bills.xlsx`；輸出資料夾若也在 OneDrive 內，結果會自動傳回 SharePoint。
+
+```powershell
+# 持續監看（每 60 秒掃描一次）
+uv run taipower-bill-watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公司\Bills OCR"
+
+# 只處理一次就結束（給工作排程器定時執行）
+uv run taipower-bill-watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公司\Bills OCR" --once
+
+# 用 exe（不需要 Python）
+TaipowerBillOCR.exe --watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公司\Bills OCR"
+```
+
+- `taipower_bills.xlsx` 第一張是所有帳單的累加總表；`Files` 工作表列出每個檔案的狀態、需檢查列數與錯誤。
+  處理紀錄在 `taipower_ocr.log`。
+- 原始 PDF 不會被搬移或修改。以檔案內容判斷是否處理過；內容不變不重跑，內容改了會重新處理並取代舊結果。
+- 檔案須靜止 `--settle` 秒（預設 30）才讀取，避免讀到 OneDrive 下載到一半的檔案；若仍讀到不完整的檔案，
+  會記為失敗，檔案完成後自動重新處理。失敗最多重試 3 次。
+- 總表被 Excel 開著時會延到下次掃描再寫入，不會遺失結果。
+- 同一個輸出資料夾只允許一個監看程式執行。
+
+開機登入後自動執行（需在該使用者登入的工作階段，OneDrive 與 Windows OCR 才可用）：
+
+```powershell
+schtasks /Create /TN "Taipower Bill OCR" /SC ONLOGON /RL LIMITED /TR "\"C:\Apps\TaipowerBillOCR\TaipowerBillOCR.exe\" --watch \"C:\Users\me\公司\Bills\" --output \"C:\Users\me\公司\Bills OCR\""
+```

@@ -66,6 +66,11 @@ def _self_test(bill_path: str, output: Path) -> int:
 
 def main() -> None:
     data_dir = _prepare_frozen_environment() if getattr(sys, "frozen", False) else None
+    if len(sys.argv) > 1 and sys.argv[1] == "--watch":
+        # TaipowerBillOCR.exe --watch IN --output OUT [--once] [--interval N]
+        from taipower_bill_ocr.watcher import main as watch_main
+
+        sys.exit(watch_main(sys.argv[2:]))
     if len(sys.argv) == 3 and sys.argv[1] == "--self-test":
         output = (data_dir or Path.cwd()) / "self_test.json"
         sys.exit(_self_test(sys.argv[2], output))
