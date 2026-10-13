@@ -459,3 +459,26 @@ TaipowerBillOCR.exe --watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公
 ```powershell
 schtasks /Create /TN "Taipower Bill OCR" /SC ONLOGON /RL LIMITED /TR "\"C:\Apps\TaipowerBillOCR\TaipowerBillOCR.exe\" --watch \"C:\Users\me\公司\Bills\" --output \"C:\Users\me\公司\Bills OCR\""
 ```
+
+## 從總表整理出自己的報表（範例：原本的 17 欄格式）
+
+總表包含所有資訊，報表格式由使用者決定。`examples/power_query/17-column.pq` 是一個 Power Query 範例，
+從 `Fields` 表整理出每張帳單一列的 17 欄格式（計費期間、電號、計費／轉供度數、各項電費、其他調整費用、
+稅前與應繳總金額，再加上來源檔案、頁碼與需人工檢查），只讀取有「計費內容」的頁面。
+
+- 其他調整費用在查詢中計算：應繳總金額 − 基本電費 − 流動電費 − 功率因數調整費 − 預繳費用。
+- 需人工檢查列出缺漏的關鍵欄位，以及報表欄位中信心等級為 `review` 的值（附另一引擎的讀法與檢查結果）。
+
+在 Excel 使用：「資料」→「取得資料」→「從其他來源」→「空白查詢」→「進階編輯器」，貼上 `.pq` 內容，
+並把第一行的檔案路徑改成總表位置（總表在 SharePoint 時，檔案開頭的註解有 `SharePoint.Files` 寫法）。
+之後總表更新，按「全部重新整理」即可。
+
+也可以用指令直接產生報表檔（需安裝 Excel，產生的檔案保留查詢，日後可在 Excel 中重新整理）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File examples\power_query\build_report.ps1 -SourceWorkbook "C:\Users\me\公司\Bills OCR\taipower_bills.xlsx" -Output "C:\Users\me\公司\Bills OCR\電費帳單17欄.xlsx"
+```
+
+以 8 個樣本檔驗證：查詢結果與程式直接匯出的 17 欄 Excel 相同（同樣 8 張帳單、144 個資料格中 141 格
+相同）；其餘 3 格是代繳憑證上程式直接匯出讀不到、而總表透過第二階段補回且通過「各項加總＝應繳總金額」
+檢查的流動電費、功率因數調整費與據此算出的其他調整費用。
