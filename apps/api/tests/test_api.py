@@ -542,6 +542,21 @@ class ApiTests(unittest.TestCase):
         archive = zipfile.ZipFile(io.BytesIO(self.client.get("/api/evidence.zip", params={"user": "Amy"}).content))
         self.assertEqual(sorted(archive.namelist()), ["draft/台電 (2).pdf", "draft/台電.pdf"])
 
+    def test_saved_evidence_pdf_keeps_the_uploaded_name(self):
+        self.upload("Amy", "jan.png")
+        self.upload("Amy", "jan.png")  # the same file again
+        first, second = (item["id"] for item in self.client.get("/api/items", params={"user": "Amy"}).json())
+        submit = lambda item_id: Path(self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"}).json()["evidence_file"])
+        self.assertEqual(submit(first).name, "jan.pdf")
+        self.assertEqual(submit(second).name, "jan (2).pdf")
+        report = load_workbook(self.settings.report_workbook)["Bills"]
+        header = [cell.value for cell in report[1]]
+        self.assertEqual(sorted(row[header.index("證據檔")].replace("\\", "/") for row in report.iter_rows(min_row=2, values_only=True)),
+                         ["evidence/Amy/jan (2).pdf", "evidence/Amy/jan.pdf"])
+        # Reopened and sent again: the freed name is used again.
+        self.client.post(f"/api/items/{first}/reopen", json={"user": "Amy"})
+        self.assertEqual(submit(first).name, "jan.pdf")
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

@@ -53,10 +53,29 @@ def user_folder(user: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", user).strip(" .") or "user"
 
 
+def evidence_folder(output_dir: Path, user: str) -> Path:
+    return output_dir / "evidence" / user_folder(user)
+
+
 def evidence_path(output_dir: Path, page: Mapping[str, Any]) -> Path:
+    """Where a submitted bill's evidence PDF is (named when it was submitted)."""
+    if page.get("evidence_file"):
+        return output_dir / page["evidence_file"]
+    # Submitted before names were recorded: "<upload id>_<file>_p<page>.pdf".
     stem = Path(page["filename"]).stem
     suffix = f"_p{page['page_number']}" if page["page_number"] else ""
-    return output_dir / "evidence" / user_folder(page["user"]) / f"{page['upload_id']}_{stem}{suffix}.pdf"
+    return evidence_folder(output_dir, page["user"]) / f"{page['upload_id']}_{stem}{suffix}.pdf"
+
+
+def new_evidence_path(output_dir: Path, page: Mapping[str, Any]) -> Path:
+    """A free path named after the uploaded file: "bill.pdf", else "bill (2).pdf"."""
+    folder = evidence_folder(output_dir, page["user"])
+    stem = Path(download_name(page)).stem
+    target, copy = folder / f"{stem}.pdf", 1
+    while target.exists():
+        copy += 1
+        target = folder / f"{stem} ({copy}).pdf"
+    return target
 
 
 def download_name(page: Mapping[str, Any]) -> str:

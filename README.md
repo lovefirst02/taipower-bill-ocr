@@ -527,6 +527,7 @@ npm test           # 前端與後端測試
    放在 SharePoint 時請將這兩個 Excel 設為唯讀：直接在 Excel 修改的內容會在下一次送出時被覆蓋，需要修改請在網頁上按「Reopen」後重新送出。
    按「Reopen」時，該帳單會從兩個 Excel 移除，舊的證據 PDF 移到 `evidence\_reopened\<名字>\`（檔名加上時間），
    不會刪除；重新送出後產生新的證據 PDF。
+   證據 PDF 以上傳的原始檔名命名（`帳單.png` → `evidence\<名字>\帳單.pdf`）；同名時依 Windows 方式編號為 `帳單 (2).pdf`。
 6. 「Download all PDFs」把自己所有帳單的證據 PDF 打包成一個 ZIP：`submitted/` 是送出時存下的版本，
    `draft/` 依目前的標記產生。「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
 

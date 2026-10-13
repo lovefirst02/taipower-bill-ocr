@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS pages (
     updated_at TEXT NOT NULL,
     submitted_at TEXT,
     submitted_by TEXT,
-    hidden INTEGER NOT NULL DEFAULT 0 -- submitted, then cleared from the user's list
+    hidden INTEGER NOT NULL DEFAULT 0, -- submitted, then cleared from the user's list
+    evidence_file TEXT               -- the submitted PDF, relative to the output folder
 );
 CREATE INDEX IF NOT EXISTS pages_upload ON pages(upload_id);
 CREATE INDEX IF NOT EXISTS uploads_user ON uploads(user);
@@ -90,10 +91,12 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(SCHEMA)
+        # Columns added since the first release.
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(pages)")}
-        if "hidden" not in columns:  # databases from before bills could be cleared
-            self._db.execute("ALTER TABLE pages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
-            self._db.commit()
+        for name, definition in (("hidden", "INTEGER NOT NULL DEFAULT 0"), ("evidence_file", "TEXT")):
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
+        self._db.commit()
         self._lock = threading.Lock()
 
     def _execute(self, sql: str, params: tuple | dict = ()) -> sqlite3.Cursor:

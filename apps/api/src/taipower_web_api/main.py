@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import threading
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -25,7 +26,16 @@ from taipower_bill_ocr.excel_export import (
 )
 
 from . import evidence
-from .reports import WorkbookWriter, archive_evidence, download_name, evidence_path, export_workbook, workbook_dir
+from .reports import (
+    WorkbookWriter,
+    archive_evidence,
+    download_name,
+    evidence_folder,
+    evidence_path,
+    export_workbook,
+    new_evidence_path,
+    workbook_dir,
+)
 from .settings import Settings
 from .store import Store, now
 from .worker import OcrWorker, usage_marks_for
@@ -93,6 +103,8 @@ def create_app(
     store = Store(settings.database)
     worker = OcrWorker(store, settings, extractor_factory)
     writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds, settings.per_user_workbooks)
+    # Choosing a free evidence file name and writing it is one step.
+    evidence_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -350,9 +362,12 @@ def create_app(
         page = apply_update(page, update)
         store.update_page(page_id, status="submitted", submitted_at=now(), submitted_by=user)
         page = store.page(page_id)
-        target = evidence_path(settings.output_dir, page)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(build_evidence_pdf(page))
+        content = build_evidence_pdf(page)
+        with evidence_lock:
+            target = new_evidence_path(settings.output_dir, page)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        store.update_page(page_id, evidence_file=target.relative_to(settings.output_dir).as_posix())
         locked = writer.write(page["user"])
         return {**item(page_id), "evidence_file": str(target), "locked_workbooks": locked}
 
@@ -366,7 +381,7 @@ def create_app(
                 archived = archive_evidence(settings.output_dir, page)
             except PermissionError:
                 raise HTTPException(409, "the evidence PDF is open in another program; close it and try again")
-        store.update_page(page_id, status="draft", submitted_at=None, submitted_by=None)
+        store.update_page(page_id, status="draft", submitted_at=None, submitted_by=None, evidence_file=None)
         locked = writer.write(page["user"])
         return {**item(page_id), "locked_workbooks": locked, "archived_evidence": str(archived) if archived else None}
 
@@ -469,7 +484,7 @@ def create_app(
         return {
             "workbooks": settings.workbooks,
             "folder": str(folder),
-            "evidence_folder": str(evidence_path(settings.output_dir, {"filename": "x", "page_number": 0, "upload_id": 0, "user": user}).parent),
+            "evidence_folder": str(evidence_folder(settings.output_dir, user)),
         }
 
     # The built web app is served from the same origin in production.
