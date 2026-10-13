@@ -47,9 +47,10 @@ type QueueActions = {
   onResume: () => void;
   onRetry: (id: number) => void;
   onRemove: (id: number) => void;
+  onRemoveAll: () => void;
 };
 
-export function UploadQueue({ uploads, onPause, onResume, onRetry, onRemove }: { uploads: Upload[] } & QueueActions) {
+export function UploadQueue({ uploads, onPause, onResume, onRetry, onRemove, onRemoveAll }: { uploads: Upload[] } & QueueActions) {
   const active = uploads.filter((upload) => upload.status !== "done");
   if (!active.length) return null;
   const running = active.some((upload) => upload.status === "queued" || upload.status === "processing");
@@ -58,8 +59,15 @@ export function UploadQueue({ uploads, onPause, onResume, onRetry, onRemove }: {
     <section className="queue">
       <div className="queue-head">
         <h3>{running ? "Processing" : paused ? "Paused" : "Not processed"}</h3>
-        {running && <button className="link" onClick={onPause} title="Stops after the page being read">Pause</button>}
-        {!running && paused && <button className="link" onClick={onResume}>Resume</button>}
+        <span className="queue-actions">
+          {running && <button className="link" onClick={onPause} title="Stops after the page being read">Pause</button>}
+          {!running && paused && <button className="link" onClick={onResume}>Resume</button>}
+          {active.some((upload) => upload.status !== "processing") && (
+            <button className="link danger" onClick={onRemoveAll} title="Remove every file that is waiting, paused or failed">
+              Remove all
+            </button>
+          )}
+        </span>
       </div>
       <ul>
         {active.map((upload) => {
@@ -98,7 +106,15 @@ export function UploadQueue({ uploads, onPause, onResume, onRetry, onRemove }: {
 
 type Filter = "all" | "review" | "draft" | "submitted";
 
-export function BillList({ items, selectedId, onSelect }: { items: ItemSummary[]; selectedId: number | null; onSelect: (id: number) => void }) {
+interface BillListProps {
+  items: ItemSummary[];
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  /** Delete drafts and clear submitted bills from the list. */
+  onDelete: (ids: number[]) => void;
+}
+
+export function BillList({ items, selectedId, onSelect, onDelete }: BillListProps) {
   const [filter, setFilter] = useState<Filter>("all");
   const counts = {
     all: items.length,
@@ -118,6 +134,17 @@ export function BillList({ items, selectedId, onSelect }: { items: ItemSummary[]
           </button>
         ))}
       </div>
+      {shown.length > 0 && (
+        <div className="list-actions">
+          <button
+            className="link danger"
+            onClick={() => onDelete(shown.map((item) => item.id))}
+            title="Delete the drafts shown; submitted bills leave the list but stay in the Excel files"
+          >
+            Clear {filter === "all" ? "all" : "these"} ({shown.length})
+          </button>
+        </div>
+      )}
       {shown.length === 0 ? (
         <p className="empty-list">{items.length ? "Nothing here." : "Upload bills to start."}</p>
       ) : (
@@ -129,6 +156,14 @@ export function BillList({ items, selectedId, onSelect }: { items: ItemSummary[]
                 <span className="name">{item.filename}{item.page ? ` · p${item.page}` : ""}</span>
                 <span className="meta">{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}</span>
               </span>
+              <button
+                className="icon remove"
+                aria-label={`${item.status === "submitted" ? "Clear" : "Delete"} ${item.filename}`}
+                title={item.status === "submitted" ? "Remove from the list (stays in the Excel files)" : "Delete this draft"}
+                onClick={(event) => { event.stopPropagation(); onDelete([item.id]); }}
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>

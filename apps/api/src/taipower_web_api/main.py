@@ -54,6 +54,11 @@ class ItemUpdate(BaseModel):
     marks: list[Mark] | None = None
 
 
+class ItemDelete(BaseModel):
+    user: str
+    ids: list[int]
+
+
 def _clean_user(user: str) -> str:
     user = user.strip()
     if not user or len(user) > 100:
@@ -186,6 +191,10 @@ def create_app(
         worker.retry(upload_id)
         return {"id": upload_id, "status": "queued"}
 
+    def drop_upload(found: dict[str, Any]) -> None:
+        store.delete_upload(found["id"])
+        Path(found["path"]).unlink(missing_ok=True)
+
     @app.delete("/api/uploads/{upload_id}")
     def remove(upload_id: int, user: str) -> dict[str, Any]:
         """Remove an upload that is waiting, paused or failed, with its pages."""
@@ -194,9 +203,47 @@ def create_app(
             raise HTTPException(409, "it is being read; pause first")
         if found["status"] == "done":
             raise HTTPException(409, "finished uploads stay with their bills")
-        store.delete_upload(upload_id)
-        Path(found["path"]).unlink(missing_ok=True)
+        drop_upload(found)
         return {"removed": upload_id}
+
+    @app.post("/api/uploads/remove")
+    def remove_all(update: ItemUpdate) -> dict[str, Any]:
+        """Remove every waiting, paused and failed upload of the user (not the one being read)."""
+        removed = 0
+        for found in store.uploads(_clean_user(update.user)):
+            if found["status"] in {"queued", "paused", "failed"} and not worker.is_current(found["id"]):
+                drop_upload(found)
+                removed += 1
+        return {"removed": removed}
+
+    @app.post("/api/items/delete")
+    def delete_items(request: ItemDelete) -> dict[str, Any]:
+        """Delete drafts, and clear submitted bills from the user's list.
+
+        A draft goes with its back pages (and its file, once no bill of the
+        upload is left). A submitted bill stays in the Excel files and keeps
+        its evidence PDF; it is only hidden. Reopen it first to delete it.
+        """
+        user = _clean_user(request.user)
+        deleted, hidden = [], []
+        for page_id in request.ids:
+            page = store.page(page_id)
+            if page is None or not page["is_bill"] or page["user"] != user:
+                continue
+            upload = store.upload(page["upload_id"])
+            if upload["status"] in {"queued", "processing"} or worker.is_current(upload["id"]):
+                raise HTTPException(409, f"{upload['filename']} is still being read; pause it first")
+            if page["status"] == "submitted":
+                store.update_page(page_id, hidden=1)
+                hidden.append(page_id)
+                continue
+            for back in store.companion_pages(page):
+                store.delete_page(back["id"])
+            store.delete_page(page_id)
+            if not store.bill_count(upload["id"]):
+                drop_upload(upload)
+            deleted.append(page_id)
+        return {"deleted": deleted, "hidden": hidden}
 
     @app.get("/api/uploads")
     def uploads(user: str) -> list[dict[str, Any]]:
@@ -209,7 +256,7 @@ def create_app(
     @app.get("/api/items")
     def items(user: str) -> list[dict[str, Any]]:
         result = []
-        for page in store.pages(user=_clean_user(user), bills_only=True):
+        for page in store.pages(user=_clean_user(user), bills_only=True, visible_only=True):
             row = page["row"] or {}
             result.append({
                 "id": page["id"],
@@ -356,7 +403,7 @@ def create_app(
         if status not in {"all", "submitted"}:
             raise HTTPException(400, "status must be 'all' or 'submitted'")
         user = _clean_user(user)
-        pages = list(store.pages(user=user, bills_only=True, submitted_only=status == "submitted"))
+        pages = list(store.pages(user=user, bills_only=True, submitted_only=status == "submitted", visible_only=True))
         if not pages:
             raise HTTPException(404, "no bills to download")
         buffer = io.BytesIO()
@@ -378,7 +425,7 @@ def create_app(
 
     @app.get("/api/export.xlsx")
     def export(user: str) -> Response:
-        pages = list(store.pages(user=_clean_user(user), bills_only=True))
+        pages = list(store.pages(user=_clean_user(user), bills_only=True, visible_only=True))
         return Response(
             export_workbook(pages),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

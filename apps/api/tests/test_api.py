@@ -480,6 +480,48 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(detail["pages"]), 1)
         self.assertTrue(any(note.startswith("Electricity Usage (kWh): 本期度數") for note in detail["mark_notes"]))
 
+    def test_remove_all_clears_the_queue_except_the_file_being_read(self):
+        def broken(self_, path, page):
+            raise RuntimeError("cannot read")
+
+        with mock.patch.object(FakeExtractor, "extract", broken):
+            self.upload("Amy", "bad.png")
+        with mock.patch.object(self.app.state.worker, "submit"):  # stay queued
+            self.upload("Amy", "a.png", "b.png")
+        self.client.post("/api/uploads/pause", json={"user": "Amy"})
+        self.upload("Ben", "c.png")
+        self.assertEqual(self.client.post("/api/uploads/remove", json={"user": "Amy"}).json(), {"removed": 3})
+        self.assertEqual(self.uploads_of("Amy"), {})
+        self.assertEqual(list(self.uploads_of("Ben")), ["c.png"])
+
+    def test_deleting_bills_removes_drafts_and_clears_submitted_from_the_list(self):
+        self.upload("Amy", "jan.png", "feb.png")
+        self.upload_two_page_bill()
+        items = {item["filename"]: item["id"] for item in self.client.get("/api/items", params={"user": "Amy"}).json()}
+        self.client.post(f"/api/items/{items['jan.png']}/submit", json={"user": "Amy"})
+        jan_upload = self.app.state.store.page(items["jan.png"])["upload_id"]
+
+        result = self.client.post("/api/items/delete", json={"user": "Amy", "ids": list(items.values())}).json()
+        self.assertEqual(sorted(result["deleted"]), sorted([items["feb.png"], items["two.pdf"]]))
+        self.assertEqual(result["hidden"], [items["jan.png"]])
+        self.assertEqual(self.client.get("/api/items", params={"user": "Amy"}).json(), [])
+        # Deleted drafts take their upload (and back pages) with them.
+        self.assertEqual(list(self.uploads_of("Amy")), ["jan.png"])
+        self.assertEqual([p["upload_id"] for p in self.app.state.store.pages(user="Amy")], [jan_upload])
+        # The submitted bill is still in the Excel file and keeps its evidence.
+        report = load_workbook(self.settings.report_workbook)["Bills"]
+        self.assertEqual(report.max_row, 2)
+        self.app.state.writer.write()
+        self.assertEqual(load_workbook(self.settings.report_workbook)["Bills"].max_row, 2)
+        self.assertEqual(len(list(self.settings.evidence_dir.rglob("*.pdf"))), 1)
+
+    def test_cannot_delete_other_users_bills_or_bills_being_read(self):
+        self.upload("Amy", "jan.png")
+        item_id = self.first_item("Amy")["id"]
+        self.assertEqual(self.client.post("/api/items/delete", json={"user": "Ben", "ids": [item_id]}).json(), {"deleted": [], "hidden": []})
+        self.app.state.store.set_upload(self.app.state.store.page(item_id)["upload_id"], status="processing")
+        self.assertEqual(self.client.post("/api/items/delete", json={"user": "Amy", "ids": [item_id]}).status_code, 409)
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

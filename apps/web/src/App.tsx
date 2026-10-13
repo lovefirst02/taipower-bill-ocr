@@ -80,9 +80,12 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // Open the first bill automatically once results arrive.
+  // Open the first bill automatically once results arrive, and move on when
+  // the open bill is deleted or cleared from the list.
   useEffect(() => {
-    if (selected === null && items.length) setSelected(items[0].id);
+    if (selected !== null && items.some((item) => item.id === selected)) return;
+    const next = items.length ? items[0].id : null;
+    if (next !== selected) setSelected(next);
   }, [items, selected]);
 
   const saveUser = (name: string) => {
@@ -103,6 +106,24 @@ export default function App() {
       setNotice((error as Error).message);
     }
     await refresh();
+  };
+  const removeAllUploads = () => {
+    const waiting = uploads.filter((upload) => upload.status !== "done" && upload.status !== "processing").length;
+    if (window.confirm(`Remove ${waiting} ${waiting === 1 ? "file" : "files"} that are waiting, paused or failed? Pages already read are discarded.`)) {
+      void queueAction(() => api.removeAllUploads(user));
+    }
+  };
+  const deleteItems = (ids: number[]) => {
+    const chosen = items.filter((item) => ids.includes(item.id));
+    const drafts = chosen.filter((item) => item.status === "draft").length;
+    const submitted = chosen.length - drafts;
+    const parts = [
+      drafts ? `delete ${drafts} ${drafts === 1 ? "draft" : "drafts"} (OCR results and edits are discarded)` : "",
+      submitted ? `remove ${submitted} submitted ${submitted === 1 ? "bill" : "bills"} from the list (they stay in the Excel files with their evidence PDFs)` : "",
+    ].filter(Boolean);
+    const question = parts.join(" and ");
+    if (!question || !window.confirm(`${question.charAt(0).toUpperCase()}${question.slice(1)}?`)) return;
+    void queueAction(() => api.deleteItems(user, ids));
   };
   const removeUpload = (id: number) => {
     const name = uploads.find((upload) => upload.id === id)?.filename ?? "this file";
@@ -174,8 +195,9 @@ export default function App() {
             onResume={() => void queueAction(() => api.resumeUploads(user))}
             onRetry={(id) => void queueAction(() => api.retryUpload(id, user))}
             onRemove={removeUpload}
+            onRemoveAll={removeAllUploads}
           />
-          <BillList items={items} selectedId={selected} onSelect={setSelected} />
+          <BillList items={items} selectedId={selected} onSelect={setSelected} onDelete={deleteItems} />
         </nav>
         <main>
           {selected !== null && columns.length ? (

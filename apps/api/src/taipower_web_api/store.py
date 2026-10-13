@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS pages (
     image_height INTEGER NOT NULL,
     updated_at TEXT NOT NULL,
     submitted_at TEXT,
-    submitted_by TEXT
+    submitted_by TEXT,
+    hidden INTEGER NOT NULL DEFAULT 0 -- submitted, then cleared from the user's list
 );
 CREATE INDEX IF NOT EXISTS pages_upload ON pages(upload_id);
 CREATE INDEX IF NOT EXISTS uploads_user ON uploads(user);
@@ -89,6 +90,10 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(SCHEMA)
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(pages)")}
+        if "hidden" not in columns:  # databases from before bills could be cleared
+            self._db.execute("ALTER TABLE pages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+            self._db.commit()
         self._lock = threading.Lock()
 
     def _execute(self, sql: str, params: tuple | dict = ()) -> sqlite3.Cursor:
@@ -156,8 +161,17 @@ class Store:
         )
         return _decode(rows[0]) if rows else None
 
-    def pages(self, *, user: str | None = None, bills_only: bool = False, submitted_only: bool = False) -> Iterator[dict[str, Any]]:
+    def pages(
+        self,
+        *,
+        user: str | None = None,
+        bills_only: bool = False,
+        submitted_only: bool = False,
+        visible_only: bool = False,
+    ) -> Iterator[dict[str, Any]]:
         conditions, params = [], []
+        if visible_only:
+            conditions.append("pages.hidden = 0")
         if user is not None:
             conditions.append("uploads.user = ?")
             params.append(user)
@@ -174,6 +188,13 @@ class Store:
         )
         for row in rows:
             yield _decode(row)
+
+    def delete_page(self, page_id: int) -> None:
+        self._execute("DELETE FROM pages WHERE id = ?", (page_id,))
+
+    def bill_count(self, upload_id: int) -> int:
+        rows = self._query("SELECT COUNT(*) AS n FROM pages WHERE upload_id = ? AND is_bill = 1", (upload_id,))
+        return int(rows[0]["n"])
 
     def companion_pages(self, page: dict[str, Any]) -> list[dict[str, Any]]:
         """The pages after a bill page in its PDF, up to the next bill (its back pages)."""

@@ -67,6 +67,13 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .page-tabs button { font-size: 12px; padding: 4px 10px; }
 .page-tabs button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .page-tabs button span { margin-left: 6px; opacity: 0.75; font-size: 11px; }
+.queue-actions { display: flex; gap: 2px; }
+button.link.danger { color: var(--danger); }
+.list-actions { display: flex; justify-content: flex-end; margin: -2px 0 4px; }
+.list-actions button { font-size: 12px; }
+.bills li button.remove { margin-left: auto; padding: 0 4px; font-size: 11px; visibility: hidden; }
+.bills li:hover button.remove, .bills li.selected button.remove, .bills li button.remove:focus { visibility: visible; }
+.bills li button.remove:hover { color: var(--danger); }
 .queue-head { display: flex; align-items: baseline; justify-content: space-between; }
 .queue-head h3 { margin-bottom: 6px; }
 .queue li { display: grid; grid-template-columns: 1fr 70px 72px 22px; gap: 6px; align-items: center; font-size: 12px; padding: 3px 0; }

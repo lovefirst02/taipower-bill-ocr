@@ -37,6 +37,9 @@ export const api = {
   pauseUploads: (user: string) => request<{ paused: number }>("/api/uploads/pause", { method: "POST", ...json({ user }) }),
   resumeUploads: (user: string) => request<{ resumed: number }>("/api/uploads/resume", { method: "POST", ...json({ user }) }),
   retryUpload: (id: number, user: string) => request<unknown>(`/api/uploads/${id}/retry`, { method: "POST", ...json({ user }) }),
+  removeAllUploads: (user: string) => request<{ removed: number }>("/api/uploads/remove", { method: "POST", ...json({ user }) }),
+  deleteItems: (user: string, ids: number[]) =>
+    request<{ deleted: number[]; hidden: number[] }>("/api/items/delete", { method: "POST", ...json({ user, ids }) }),
   removeUpload: (id: number, user: string) =>
     request<unknown>(`/api/uploads/${id}?user=${encodeURIComponent(user)}`, { method: "DELETE" }),
   items: (user: string) => request<ItemSummary[]>(`/api/items?user=${encodeURIComponent(user)}`),
