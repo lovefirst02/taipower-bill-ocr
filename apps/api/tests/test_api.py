@@ -239,6 +239,70 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(uploads[0]["status"], "done")
         self.assertEqual(self.client.get("/api/items", params={"user": "Amy"}).json(), [])
 
+    def submit_all(self, user):
+        store = self.app.state.store
+        for page in store.pages(user=user, bills_only=True):
+            store.update_page(page["id"], status="submitted", submitted_at="2026-10-14T09:00:00", submitted_by=user)
+
+    def test_simultaneous_workbook_writes_do_not_clash(self):
+        import threading
+
+        self.upload("Amy", *[f"bill{n}.png" for n in range(6)])
+        self.submit_all("Amy")
+        errors = []
+
+        def write():
+            try:
+                self.app.state.writer.write()
+            except Exception as exc:  # pragma: no cover - the failure being tested
+                errors.append(exc)
+
+        threads = [threading.Thread(target=write) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(load_workbook(self.settings.report_workbook)["Bills"].max_row, 7)  # header + 6
+        self.assertEqual([p.name for p in self.settings.output_dir.iterdir() if p.name.startswith("~tmp")], [])
+
+    def test_workbook_open_in_excel_is_written_by_the_background_retry(self):
+        import time
+
+        writer = reports.WorkbookWriter(self.app.state.store, self.settings.output_dir, retry_seconds=0.1)
+        writer.start()
+        self.addCleanup(writer.stop)
+        self.upload("Amy", "jan.png")
+        self.submit_all("Amy")
+        real_save = reports.save_tables
+        with mock.patch.object(reports, "save_tables", return_value=False):
+            self.assertEqual(writer.write(), ["taipower_bills_17.xlsx"])
+            self.assertTrue(writer.pending)
+        # The file is closed again: the retry loop replaces it without a submit.
+        self.assertIs(reports.save_tables, real_save)
+        deadline = time.time() + 5
+        while writer.pending and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(writer.pending)
+        self.assertEqual(load_workbook(self.settings.report_workbook)["Bills"].max_row, 2)
+
+    def test_both_workbooks_record_uploader_and_submitter(self):
+        self.upload("Amy", "jan.png")
+        item_id = self.first_item("Amy")["id"]
+        self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"})
+
+        report = load_workbook(self.settings.report_workbook)["Bills"]
+        header = [cell.value for cell in report[1]]
+        row = dict(zip(header, [cell.value for cell in report[2]]))
+        self.assertEqual((row["上傳者"], row["送出者"]), ("Amy", "Amy"))
+        self.assertTrue(row["送出時間"])
+
+        pages = load_workbook(self.settings.master_workbook)["Pages"]
+        header = [cell.value for cell in pages[1]]
+        page = dict(zip(header, [cell.value for cell in pages[2]]))
+        self.assertEqual((page["uploaded_by"], page["submitted_by"]), ("Amy", "Amy"))
+        self.assertEqual(page["submitted_at"], row["送出時間"])
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

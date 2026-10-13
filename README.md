@@ -509,10 +509,12 @@ npm test           # 前端與後端測試
    標記可拖曳、拉角縮放、修改文字與字級、新增或刪除；「Reset」只還原標記，不影響未存的欄位。
    「Preview evidence」顯示伺服器實際輸出的圖，與下載的 PDF／PNG 相同。
 5. 「Submit」送出：寫入證據 PDF（PDF 上傳時保留原始向量內容並疊上標記），並重建兩個共用 Excel：
-   - `taipower_bills_17.xlsx`：每張帳單一列的 17 欄格式，加上上傳者、送出時間與證據檔路徑。
+   - `taipower_bills_17.xlsx`：每張帳單一列的 17 欄格式，加上上傳者、送出者、送出時間與證據檔路徑。
    - `taipower_bills.xlsx`：完整總表（Pages／Fields／TableRows／Files），人工修正的值標為
      `reviewer_corrected`，原 OCR 讀值保留在 `cross_check_value`。
-   Excel 被開啟時會提示，下一次送出時再寫入。送出後如需修改可按「Reopen」。
+   完整總表的 `Pages` 也記錄 `uploaded_by`、`submitted_by` 與 `submitted_at`（資料夾監看程式產生的帳單這三欄為空）。
+   兩個 Excel 由伺服器依資料庫整份重建，同一時間只有一個寫入（同時送出不會互相覆蓋）；檔案被 Excel 開啟時會提示，並在背景每 60 秒重試（`TAIPOWER_WORKBOOK_RETRY_SECONDS`），不必等下一次送出。
+   放在 SharePoint 時請將這兩個 Excel 設為唯讀：直接在 Excel 修改的內容會在下一次送出時被覆蓋，需要修改請在網頁上按「Reopen」後重新送出。
 6. 「Download all PDFs」把自己所有帳單的證據 PDF 打包成一個 ZIP：`submitted/` 是送出時存下的版本，
    `draft/` 依目前的標記產生。「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
 

@@ -18,6 +18,8 @@ class Settings:
     output_dir: Path
     ocr_backend: str = "crosscheck"
     dpi: int = 200
+    # How often a workbook left open in Excel is retried.
+    workbook_retry_seconds: float = 60
     web_dist: Path = REPO_ROOT / "apps" / "web" / "dist"
 
     @property
@@ -48,4 +50,5 @@ class Settings:
             output_dir=Path(os.environ.get("TAIPOWER_OUTPUT_DIR", data_dir / "output")),
             ocr_backend=os.environ.get("TAIPOWER_OCR_BACKEND", "crosscheck"),
             dpi=int(os.environ.get("TAIPOWER_DPI", "200")),
+            workbook_retry_seconds=float(os.environ.get("TAIPOWER_WORKBOOK_RETRY_SECONDS", "60")),
         )

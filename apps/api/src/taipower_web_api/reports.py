@@ -1,13 +1,16 @@
 """Workbooks written from reviewed bills: the 17-column report and the master.
 
 Both are rebuilt from the database on every submit, so they always match
-what reviewers confirmed; a workbook held open in Excel is retried later.
+what reviewers confirmed. Writes are serialised, and a workbook held open in
+Excel is retried in the background until it can be replaced.
 """
 
 from __future__ import annotations
 
 import copy
 import io
+import logging
+import threading
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -17,8 +20,10 @@ from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_m
 
 from .store import Store
 
-UPLOADER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出時間", "狀態", "證據檔"
-REPORT_COLUMNS = [*COLUMNS, UPLOADER, SUBMITTED_AT, STATUS, EVIDENCE]
+UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出者", "送出時間", "狀態", "證據檔"
+REPORT_COLUMNS = [*COLUMNS, UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE]
+
+log = logging.getLogger("taipower_web_api.reports")
 REVIEWED = "已人工確認"
 CORRECTED = "reviewer_corrected"
 
@@ -54,6 +59,7 @@ def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[
         evidence = str(evidence_path(output_dir, page).relative_to(output_dir))
     extras = {
         UPLOADER: page["user"],
+        SUBMITTER: page.get("submitted_by"),
         SUBMITTED_AT: page.get("submitted_at"),
         STATUS: "submitted" if submitted else "draft",
         EVIDENCE: evidence,
@@ -148,11 +154,17 @@ def write_workbooks(store: Store, output_dir: Path) -> list[str]:
         }
         # Back pages (meter readings, energy saving) of the same upload belong
         # to the bill too, so they are included alongside the reviewed page.
-        pages = [
-            corrected.get(page["id"], page["dataset"])
-            for page in store.pages()
-            if page["upload_id"] == upload_id
-        ]
+        pages = []
+        for page in store.pages():
+            if page["upload_id"] != upload_id:
+                continue
+            record = copy.deepcopy(corrected.get(page["id"], page["dataset"]))
+            record["summary"].update(
+                uploaded_by=upload["user"],
+                submitted_by=bill_pages[0]["submitted_by"],
+                submitted_at=bill_pages[0]["submitted_at"],
+            )
+            pages.append(record)
         add_document(sheets, {
             "file": upload["filename"],
             "processed_at": upload["processed_at"],
@@ -167,3 +179,50 @@ def write_workbooks(store: Store, output_dir: Path) -> list[str]:
     if not save_master(master, sheets):
         locked.append(master.name)
     return locked
+
+
+class WorkbookWriter:
+    """Rebuilds the shared workbooks one request at a time.
+
+    Simultaneous submits would otherwise race on the same files. When a
+    workbook is open in Excel the write is retried every ``retry_seconds``
+    in the background, so it does not wait for the next submit.
+    """
+
+    def __init__(self, store: Store, output_dir: Path, retry_seconds: float = 60) -> None:
+        self.store = store
+        self.output_dir = output_dir
+        self.retry_seconds = retry_seconds
+        self._lock = threading.Lock()
+        self._pending = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._retry_loop, name="workbook-retry", daemon=True)
+
+    @property
+    def pending(self) -> bool:
+        return self._pending.is_set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def write(self) -> list[str]:
+        """Rebuild both workbooks now; returns the ones that were locked."""
+        with self._lock:
+            locked = write_workbooks(self.store, self.output_dir)
+            if locked:
+                self._pending.set()
+                log.warning("%s open elsewhere; retrying every %ss", ", ".join(locked), self.retry_seconds)
+            else:
+                self._pending.clear()
+            return locked
+
+    def _retry_loop(self) -> None:
+        while not self._stop.wait(self.retry_seconds):
+            if self._pending.is_set():
+                try:
+                    self.write()
+                except Exception:  # noqa: BLE001 - keep retrying
+                    log.exception("Retrying the workbooks failed")

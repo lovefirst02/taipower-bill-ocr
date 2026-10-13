@@ -25,7 +25,7 @@ from taipower_bill_ocr.excel_export import (
 )
 
 from . import evidence
-from .reports import export_workbook, evidence_path, write_workbooks
+from .reports import WorkbookWriter, evidence_path, export_workbook
 from .settings import Settings
 from .store import Store, now
 from .worker import OcrWorker
@@ -72,16 +72,20 @@ def create_app(
     settings = settings or Settings.from_env()
     store = Store(settings.database)
     worker = OcrWorker(store, settings, extractor_factory)
+    writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if start_worker:
             worker.start()
+        writer.start()
         yield
         worker.stop()
+        writer.stop()
 
     app = FastAPI(title="Taipower Bill OCR", lifespan=lifespan)
     app.state.store, app.state.worker, app.state.settings = store, worker, settings
+    app.state.writer = writer
 
     def page_or_404(page_id: int) -> dict[str, Any]:
         page = store.page(page_id)
@@ -223,7 +227,7 @@ def create_app(
         target.write_bytes(
             evidence.pdf_bytes(Path(page["path"]), page["page_number"], page_image(page), settings.dpi, marks_of(page))
         )
-        locked = write_workbooks(store, settings.output_dir)
+        locked = writer.write()
         return {**item(page_id), "evidence_file": str(target), "locked_workbooks": locked}
 
     @app.post("/api/items/{page_id}/reopen")
@@ -231,7 +235,7 @@ def create_app(
         page_or_404(page_id)
         _clean_user(update.user)
         store.update_page(page_id, status="draft", submitted_at=None, submitted_by=None)
-        locked = write_workbooks(store, settings.output_dir)
+        locked = writer.write()
         return {**item(page_id), "locked_workbooks": locked}
 
     @app.post("/api/items/{page_id}/reset-marks")

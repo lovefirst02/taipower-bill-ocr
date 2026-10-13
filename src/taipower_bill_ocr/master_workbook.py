@@ -8,6 +8,7 @@ program_version and its pages (each a ``PageRecord.as_json()``).
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -18,6 +19,8 @@ PAGE_COLUMNS = [
     "filled_from_cross_check", "primary_only", "unverified", "resolved_by_check",
     "confidence_high", "confidence_medium", "confidence_low", "confidence_review",
     "charges_difference_twd", "tax_difference_twd", "supplemented_from_ocr_lines", "warnings",
+    # Filled in by the web app; empty for bills read by the folder watcher.
+    "uploaded_by", "submitted_by", "submitted_at",
 ]
 _CONTEXT = ["file", "page", "customer_number", "billing_period_start", "billing_period_end"]
 SHEET_COLUMNS = {
@@ -97,7 +100,8 @@ def save_tables(
             sheet.add_table(table)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    temp = target.with_name(f"~tmp_{target.name}")
+    # A unique temporary name, so two writers never clobber each other's file.
+    temp = target.with_name(f"~tmp_{uuid.uuid4().hex[:8]}_{target.name}")
     workbook.save(temp)
     try:
         os.replace(temp, target)
