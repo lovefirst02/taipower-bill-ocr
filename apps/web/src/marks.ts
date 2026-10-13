@@ -90,7 +90,7 @@ export function newLabel(page: Bounds, text: string, around?: { x: number; y: nu
   };
 }
 
-export const EVIDENCE_LABELS = ["Billing period", "Grey Electricity Cost", "Electricity Usage (kwh)"];
+export const EVIDENCE_LABELS = ["Billing period", "Grey Electricity Cost", "Electricity Usage (kWh)"];
 
 /** Whether a mark sits on the given page of the review (the bill page has none set). */
 export function isOnPage(mark: Mark, page: ViewPage): boolean {

@@ -450,7 +450,7 @@ class ApiTests(unittest.TestCase):
         usage = [mark for mark in detail["marks"] if mark.get("page") == 2]
         label = next(mark for mark in usage if mark["type"] == "label")
         highlight = next(mark for mark in usage if mark["type"] == "highlight")
-        self.assertEqual(label["text"], "Electricity Usage (kwh)")
+        self.assertEqual(label["text"], "Electricity Usage (kWh)")
         # From the 本期 label to the 15000 under 度數, on that row only.
         self.assertLessEqual(highlight["x"], 860)
         self.assertGreaterEqual(highlight["x"] + highlight["w"], 1254 + 78)
@@ -478,7 +478,7 @@ class ApiTests(unittest.TestCase):
         self.upload("Amy", "jan.png")
         detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
         self.assertEqual(len(detail["pages"]), 1)
-        self.assertTrue(any(note.startswith("Electricity Usage (kwh): 本期度數") for note in detail["mark_notes"]))
+        self.assertTrue(any(note.startswith("Electricity Usage (kWh): 本期度數") for note in detail["mark_notes"]))
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

@@ -45,7 +45,7 @@ EVIDENCE_TARGETS = (
 
 
 # 節電資訊 → 本期 → 度數: the current period's usage, usually on the back page.
-USAGE_LABEL = "Electricity Usage (kwh)"
+USAGE_LABEL = "Electricity Usage (kWh)"
 USAGE_GROUP = "usage"
 
 
