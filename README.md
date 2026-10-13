@@ -419,9 +419,24 @@ TaipowerBillOCR.exe --watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公
   | `Files` | 每個檔案的處理狀態、頁數、需檢查頁數與錯誤 |
 
 - 證據狀態（`Fields.status`）：`engines_agree` 兩個 OCR 引擎讀到相同值；`engines_disagree` 不同
-  （`cross_check_value` 是另一個引擎的值，該頁會標記需人工檢查）；`filled_from_cross_check` 只有
-  Windows OCR 讀到；`primary_only` 只有 PaddleOCR 讀到；`unverified` 只有一個引擎讀到、且程式尚未
-  認得的項目，品質不保證。
+  （`cross_check_value` 是另一個引擎的值）；`resolved_by_check` 兩個引擎不同，但只有一個讀法通過帳單
+  檢查，程式採用該讀法；`filled_from_cross_check` 只有 Windows OCR 讀到；`primary_only` 只有
+  PaddleOCR 讀到；`unverified` 只有一個引擎讀到、且程式尚未認得的項目。
+- 帳單檢查（`Fields.checks`，例如 `tax:ok(Δ0.3)`）：依樣本帳單實測訂定，每項都是正確帳單必然成立的性質：
+
+  | 檢查 | 內容 |
+  |---|---|
+  | `charges_sum` | 計費內容各項（含正負號）加總等於應繳總金額（±1 元）；成立時每一項都得到驗證 |
+  | `tax` | 稅前應繳總金額 × 1.05 等於應繳總金額（±1 元） |
+  | `carbon_per_kwh` | 電力排碳量 ÷ 計費度數介於 0.2–0.8 kg/度（實際約 0.49） |
+  | `billing_period` | 計費期間為有效日期，且長度 20–70 天（月繳或雙月繳） |
+  | `range` | 每度燃料成本、每度再生基金、每度平均電價、功率因數在合理範圍內 |
+  | `date` | `…_date` 欄位為存在的民國日期 |
+
+- 信心等級（`Fields.confidence`）：`high` 兩個引擎一致、由檢查判定，或通過跨欄位算式檢查；
+  `medium` 只有一個引擎讀到，但通過範圍或日期檢查；`low` 只有一個引擎讀到且沒有可用的檢查；
+  `review` 兩個引擎不同且無法判定，或未通過檢查。頁面有任何 `review` 欄位時 `Pages.needs_review` 為
+  TRUE。`Pages.charges_difference_twd`／`tax_difference_twd` 是該頁的算式差額，可用來找出漏讀的項目。
 - `recognized`：TRUE 表示欄位對應到固定的欄位代號；FALSE 表示程式尚未認得，以帳單上的中文標籤作為
   `key` 保存。尚未認得的項目若兩個引擎讀到相同的標籤與值，狀態仍為 `engines_agree`。
 - `printed_label`：帳單上實際印的（或 OCR 讀到的）標籤與 `label` 不同時才有值，例如 OCR 把

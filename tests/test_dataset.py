@@ -5,6 +5,7 @@ from taipower_bill_ocr.dataset import (
     DISAGREE,
     FILLED,
     PRIMARY_ONLY,
+    RESOLVED,
     UNVERIFIED,
     page_record,
 )
@@ -83,13 +84,33 @@ class PageRecordTests(unittest.TestCase):
         self.assertEqual(fields[("charge_info", "basic_charge_twd")]["status"], AGREE)
         # Windows renders the decimal point as '·'; still the same amount.
         self.assertEqual(fields[("charge_info", "demand_response_discount_twd")]["status"], AGREE)
+        # The per-kWh range check settles 2.3396 vs 23396 without review.
         fuel = fields[("other_info", "fuel_cost_per_kwh_twd")]
-        self.assertEqual((fuel["status"], fuel["cross_check_value"]), (DISAGREE, 23396))
+        self.assertEqual((fuel["status"], fuel["value"], fuel["cross_check_value"]), (RESOLVED, 2.3396, 23396))
+        self.assertEqual(fuel["confidence"], "high")
         rental = fields[("charge_info", "meter_rental_twd")]
         self.assertEqual((rental["status"], rental["source"]), (FILLED, "cross_check"))
         self.assertEqual(fields[("user_info", "tariff_type")]["status"], PRIMARY_ONLY)
+        self.assertFalse(record.summary["needs_review"])
+        self.assertEqual(record.summary["resolved_by_check"], 1)
+
+    def test_disagreement_no_check_can_settle_stays_for_review(self):
+        record = page_record(
+            bill(other_info={"feeder_code": "FI5C"}), file="a.pdf", page=1,
+            cross_check=bill(other_info={"feeder_code": "F15C"}),
+        )
+        item = record.fields[0]
+        self.assertEqual((item["status"], item["confidence"]), (DISAGREE, "review"))
         self.assertTrue(record.summary["needs_review"])
-        self.assertEqual(record.summary["engines_disagree"], 1)
+
+    def test_cross_check_reading_wins_when_only_it_passes(self):
+        record = page_record(
+            bill(user_info={"billing_period": {"start": "113/02/01", "end": "113/02/01"}}), file="a.pdf", page=2,
+            cross_check=bill(user_info={"billing_period": {"start": "113/02/01", "end": "113/02/29"}}),
+        )
+        end = fields_by_key(record)[("user_info", "billing_period.end")]
+        self.assertEqual((end["value"], end["cross_check_value"], end["source"]), ("113/02/29", "113/02/01", "cross_check"))
+        self.assertEqual((end["status"], end["confidence"]), (RESOLVED, "high"))
 
     def test_value_location_comes_from_the_ocr_line_that_printed_it(self):
         page = bill(charge_info={"basic_charge_twd": 634220})

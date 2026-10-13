@@ -40,15 +40,16 @@ PAGE_COLUMNS = [
     "file", "page", "document_type", "customer_number", "billing_period_start",
     "billing_period_end", "total_amount_twd", "needs_review", "fields_recognized",
     "fields_unrecognized", "engines_agree", "engines_disagree",
-    "filled_from_cross_check", "primary_only", "unverified",
-    "supplemented_from_ocr_lines", "warnings",
+    "filled_from_cross_check", "primary_only", "unverified", "resolved_by_check",
+    "confidence_high", "confidence_medium", "confidence_low", "confidence_review",
+    "charges_difference_twd", "tax_difference_twd", "supplemented_from_ocr_lines", "warnings",
 ]
 _CONTEXT = ["file", "page", "customer_number", "billing_period_start", "billing_period_end"]
 SHEET_COLUMNS = {
     "Pages": [*PAGE_COLUMNS, "processed_at", "program_version"],
     "Fields": [
         *_CONTEXT, "block", "block_label", "key", "label", "printed_label", "value",
-        "recognized", "status", "cross_check_value", "source", "origin",
+        "recognized", "status", "confidence", "checks", "cross_check_value", "source", "origin",
         "x", "y", "width", "height",
     ],
     "TableRows": [
@@ -250,7 +251,8 @@ class FolderProcessor:
                         context
                         + [item["block"], item["block_label"], item["key"], item["label"],
                            item.get("printed_label"), item["value"], item["recognized"],
-                           item["status"], item["cross_check_value"], item["source"],
+                           item["status"], item.get("confidence"), item.get("checks"),
+                           item["cross_check_value"], item["source"],
                            item.get("origin"),
                            box.get("x"), box.get("y"), box.get("width"), box.get("height")]
                     )

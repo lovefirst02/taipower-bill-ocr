@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterable
 
+from .checks import ARITHMETIC, CheckResult, charges_difference, check_field, tax_difference
 from .parser import BillResult, OcrLine, _BLOCK_LABELS, _FIELD_LABELS
 from .parser import _compact as _parser_compact
 
@@ -108,6 +109,54 @@ DISAGREE = "engines_disagree"
 FILLED = "filled_from_cross_check"
 PRIMARY_ONLY = "primary_only"
 UNVERIFIED = "unverified"  # unrecognised label: kept, but not cross-checked
+RESOLVED = "resolved_by_check"  # engines disagreed; a bill check picked one
+
+# How far a value can be trusted, combining engine agreement and checks.
+HIGH, MEDIUM, LOW, REVIEW = "high", "medium", "low", "review"
+
+
+def _outcome(results: list[CheckResult]) -> bool | None:
+    """True if every applicable check passed, False if any failed."""
+    if not results:
+        return None
+    return all(result.passed for result in results)
+
+
+def _verify(fields: list[dict[str, Any]], other_lines: list[OcrLine]) -> None:
+    """Resolve engine disagreements with bill checks, then grade every field.
+
+    When only one engine's reading passes the checks (e.g. 2.3396 vs 23396
+    per kWh, or an end date before the start), that reading is kept and the
+    field is no longer sent for review.
+    """
+    values = {(item["block"], item["key"]): item["value"] for item in fields}
+    for item in fields:
+        if item["status"] != DISAGREE:
+            continue
+        path = (item["block"], item["key"])
+        mine = _outcome(check_field(*path, item["value"], values))
+        theirs = _outcome(check_field(*path, item["cross_check_value"], values))
+        if mine is True and theirs is False:
+            item["status"] = RESOLVED
+        elif mine is False and theirs is True:
+            item["value"], item["cross_check_value"] = item["cross_check_value"], item["value"]
+            item["source"], item["status"] = "cross_check", RESOLVED
+            item["bbox"] = _locate(other_lines, item["block"], item["value"])
+            values[path] = item["value"]
+
+    for item in fields:
+        results = check_field(item["block"], item["key"], item["value"], values)
+        item["checks"] = "; ".join(str(result) for result in results) or None
+        failed = any(not result.passed for result in results)
+        arithmetic = any(result.passed and result.name in ARITHMETIC for result in results)
+        if item["status"] == DISAGREE or failed:
+            item["confidence"] = REVIEW
+        elif item["status"] in (AGREE, RESOLVED) or arithmetic:
+            item["confidence"] = HIGH
+        elif results:
+            item["confidence"] = MEDIUM
+        else:
+            item["confidence"] = LOW
 
 
 @dataclass
@@ -570,6 +619,9 @@ def page_record(
             }
         )
 
+    _verify(fields, other_lines)
+    values = {(item["block"], item["key"]): item["value"] for item in fields}
+
     table_rows = [
         {
             "block": path[0],
@@ -612,10 +664,17 @@ def page_record(
         "filled_from_cross_check": counts[FILLED],
         "primary_only": counts[PRIMARY_ONLY],
         "unverified": counts[UNVERIFIED],
+        "resolved_by_check": sum(1 for item in fields if item["status"] == RESOLVED),
+        **{
+            f"confidence_{level}": sum(1 for item in fields if item["confidence"] == level)
+            for level in (HIGH, MEDIUM, LOW, REVIEW)
+        },
+        "charges_difference_twd": charges_difference(values),
+        "tax_difference_twd": tax_difference(values),
         "supplemented_from_ocr_lines": mine.supplemented,
         "header_mispairs_dropped": dropped,
         "duplicates_dropped": mine.duplicates,
-        "needs_review": bool(counts[DISAGREE] or warnings),
+        "needs_review": bool(warnings) or any(item["confidence"] == REVIEW for item in fields),
         "warnings": "; ".join(warnings) or None,
     }
     ocr_lines = [
