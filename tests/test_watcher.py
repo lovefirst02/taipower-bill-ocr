@@ -46,10 +46,9 @@ class FolderProcessorTests(unittest.TestCase):
     def processor(self):
         return FolderProcessor(self.config, extractor=self.extractor, clock=self.clock)
 
-    def sheet_rows(self, name=None):
+    def sheet_rows(self, name="Pages"):
         workbook = load_workbook(self.output / watcher.WORKBOOK)
-        sheet = workbook[name] if name else workbook.active
-        return [list(row) for row in sheet.iter_rows(min_row=2, values_only=True)]
+        return [list(row) for row in workbook[name].iter_rows(min_row=2, values_only=True)]
 
     def test_new_files_become_rows_in_the_cumulative_workbook(self):
         self.add("2024/jan.png")
@@ -57,10 +56,35 @@ class FolderProcessorTests(unittest.TestCase):
         summary = self.processor().run_once()
 
         self.assertEqual(summary, {"processed": 2, "failed": 0})
-        sources = [row[17] for row in self.sheet_rows()]
-        self.assertEqual(sorted(sources), ["2024/jan.png", "feb.png"])
+        self.assertEqual(sorted(row[0] for row in self.sheet_rows()), ["2024/jan.png", "feb.png"])
         files = self.sheet_rows("Files")
         self.assertEqual([(row[0], row[1], row[2]) for row in files], [("2024/jan.png", "done", 1), ("feb.png", "done", 1)])
+
+    def test_every_field_is_kept_with_a_json_copy_per_bill(self):
+        self.add("2024/jan.png")
+        self.processor().run_once()
+
+        columns = watcher.SHEET_COLUMNS["Fields"]
+        fields = {
+            (row[columns.index("block")], row[columns.index("key")]): dict(zip(columns, row))
+            for row in self.sheet_rows("Fields")
+        }
+        basic = fields[("charge_info", "basic_charge_twd")]
+        self.assertEqual((basic["value"], basic["label"]), (700000, "基本電費"))
+        transferred = fields[("user_info", "transferred_energy.off_peak_kwh")]
+        self.assertEqual((transferred["value"], transferred["customer_number"]), (400, "00-12-3456-78-9"))
+        document = json.loads((self.output / "json" / "2024" / "jan.png.json").read_text(encoding="utf-8"))
+        self.assertEqual(document["schema_version"], 1)
+        self.assertEqual(len(document["pages"]), 1)
+        self.assertIn("ocr_lines", document["pages"][0])
+
+    def test_sheets_are_excel_tables_for_power_query(self):
+        self.add("jan.png")
+        self.processor().run_once()
+        workbook = load_workbook(self.output / watcher.WORKBOOK)
+        self.assertEqual(workbook.sheetnames, ["Pages", "Fields", "TableRows", "Files"])
+        self.assertEqual(list(workbook["Fields"].tables), ["Fields"])
+        self.assertEqual(list(workbook["Pages"].tables), ["Pages"])
 
     def test_unchanged_files_are_not_processed_again(self):
         self.add("jan.png")

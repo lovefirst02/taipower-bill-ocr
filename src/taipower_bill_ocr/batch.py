@@ -128,6 +128,10 @@ class PageDone:
     page_number: int | None
     record: BillRecord | None  # None when the page has no charge breakdown
     locations: dict[str, FieldLocation] = field(default_factory=dict)
+    # Full OCR results, for consumers that keep everything on the page.
+    bill: BillResult | None = None
+    cross_check: BillResult | None = None
+    cross_check_error: str | None = None
 
 
 @dataclass
@@ -139,28 +143,31 @@ class FileFinished:
 BatchEvent = FileStarted | PageDone | FileFinished
 
 
-def _build_record(
-    extractor: PageExtractor,
-    bill: BillResult,
-    path: Path,
-    page_number: int | None,
-    source: str,
-) -> BillRecord:
-    if not extractor.cross_checks:
-        return bill_to_record(bill, source)
+def _cross_check(
+    extractor: PageExtractor, path: Path, page_number: int | None
+) -> tuple[BillResult | None, str | None]:
     try:
-        cross_check = extractor.extract_cross_check(path, page_number)
+        return extractor.extract_cross_check(path, page_number), None
     except Exception as exc:  # noqa: BLE001 - the primary result is still usable
-        record = bill_to_record(bill, source)
+        return None, str(exc)
+
+
+def _build_record(
+    bill: BillResult,
+    source: str,
+    cross_check: BillResult | None,
+    cross_check_error: str | None,
+) -> BillRecord:
+    record = bill_to_record(bill, source, cross_check=cross_check)
+    if cross_check_error:
         record.issues.append(
             Issue(
-                f"Windows OCR 交叉檢查失敗：{exc}",
-                f"Windows OCR cross-check failed: {exc}",
+                f"Windows OCR 交叉檢查失敗：{cross_check_error}",
+                f"Windows OCR cross-check failed: {cross_check_error}",
             )
         )
         record.row[REVIEW_COLUMN] = "；".join(issue.zh for issue in record.issues)
-        return record
-    return bill_to_record(bill, source, cross_check=cross_check)
+    return record
 
 
 def iter_batch(
@@ -170,11 +177,13 @@ def iter_batch(
     *,
     source_name: Callable[[Path], str] = lambda path: path.name,
     page_numbers: list[int] | None = None,
+    cross_check_all_pages: bool = False,
 ) -> Iterator[BatchEvent]:
     """Yield progress events while extracting every page of ``files``.
 
     A failing file is reported through ``FileFinished.error`` and the batch
-    continues; ``cancel`` stops the batch between pages.
+    continues; ``cancel`` stops the batch between pages. A cross-checking
+    extractor re-reads charge pages only, unless ``cross_check_all_pages``.
     """
     for path in files:
         if cancel is not None and cancel.is_set():
@@ -190,16 +199,23 @@ def iter_batch(
                 if cancel is not None and cancel.is_set():
                     yield FileFinished(path, "Cancelled")
                     return
-                bill = extractor.extract(path, page_number if is_pdf else None)
-                if is_charge_page(bill):
-                    record = _build_record(
-                        extractor, bill, path, page_number if is_pdf else None,
-                        source_name(path),
-                    )
+                page = page_number if is_pdf else None
+                bill = extractor.extract(path, page)
+                charge_page = is_charge_page(bill)
+                cross_check, cross_check_error = (
+                    _cross_check(extractor, path, page)
+                    if extractor.cross_checks and (charge_page or cross_check_all_pages)
+                    else (None, None)
+                )
+                if charge_page:
+                    record = _build_record(bill, source_name(path), cross_check, cross_check_error)
                     locations = locate_fields(bill, record.row)
                 else:
                     record, locations = None, {}
-                yield PageDone(path, page_number if is_pdf else None, record, locations)
+                yield PageDone(
+                    path, page, record, locations,
+                    bill=bill, cross_check=cross_check, cross_check_error=cross_check_error,
+                )
         except Exception as exc:  # noqa: BLE001 - report and keep the batch going
             yield FileFinished(path, f"{type(exc).__name__}: {exc}")
             continue

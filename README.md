@@ -407,8 +407,23 @@ uv run taipower-bill-watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公�
 TaipowerBillOCR.exe --watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公司\Bills OCR"
 ```
 
-- `taipower_bills.xlsx` 第一張是所有帳單的累加總表；`Files` 工作表列出每個檔案的狀態、需檢查列數與錯誤。
-  處理紀錄在 `taipower_ocr.log`。
+- 程式只負責把帳單上**所有資訊**取出，不預設任何報表格式；需要哪些欄位，由使用者用 Excel
+  Power Query、樞紐分析或其他工具自行從總表取得。
+- `taipower_bills.xlsx` 的每張工作表都是同名的 Excel 表格，可直接用 Power Query 讀取：
+
+  | 表格 | 內容 |
+  |---|---|
+  | `Pages` | 每頁一列：檔案、頁碼、帳單類型、電號、計費期間、應繳總金額、是否需人工檢查與各類欄位數 |
+  | `Fields` | 每個欄位一列（長格式）：區塊、欄位代號、帳單上的中文名稱、值、證據狀態、另一引擎讀到的值、在頁面上的位置。每列都帶檔案、頁碼、電號與計費期間，不需另外合併 |
+  | `TableRows` | 電表指數、節電比較等表格，每個儲存格一列 |
+  | `Files` | 每個檔案的處理狀態、頁數、需檢查頁數與錯誤 |
+
+- 證據狀態（`Fields.status`）：`engines_agree` 兩個 OCR 引擎讀到相同值；`engines_disagree` 不同
+  （`cross_check_value` 是另一個引擎的值，該頁會標記需人工檢查）；`filled_from_cross_check` 只有
+  Windows OCR 讀到；`primary_only` 只有 PaddleOCR 讀到；`unverified` 程式尚未認得的項目，以帳單上的
+  中文標籤保存（`recognized` 為 FALSE），品質不保證。
+- `json\` 資料夾每份帳單一個 JSON，除上述內容外還保留原始 OCR 文字與座標，程式改進後可據此重新解析。
+- 處理紀錄在 `taipower_ocr.log`。
 - 原始 PDF 不會被搬移或修改。以檔案內容判斷是否處理過；內容不變不重跑，內容改了會重新處理並取代舊結果。
 - 檔案須靜止 `--settle` 秒（預設 30）才讀取，避免讀到 OneDrive 下載到一半的檔案；若仍讀到不完整的檔案，
   會記為失敗，檔案完成後自動重新處理。失敗最多重試 3 次。

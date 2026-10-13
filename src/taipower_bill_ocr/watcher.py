@@ -1,7 +1,9 @@
 """Watch a folder (e.g. a OneDrive-synced SharePoint library) and OCR new bills.
 
-Every new or changed PDF/image becomes rows in one cumulative workbook in the
-output folder. Run continuously, or once per call from Task Scheduler::
+Everything read from each new or changed PDF/image is kept: one JSON file
+per bill under ``json/`` (including raw OCR lines), and a cumulative
+workbook whose Pages, Fields, TableRows and Files tables consumers query for
+whatever they need. Run continuously, or once per call from Task Scheduler::
 
     python -m taipower_bill_ocr.watcher "C:\\Users\\me\\Company\\Bills" --output "C:\\Users\\me\\Company\\Bills OCR"
     python -m taipower_bill_ocr.watcher IN --output OUT --once
@@ -26,12 +28,32 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .batch import FileFinished, PageDone, PageExtractor, find_bill_files, iter_batch
-from .excel_export import REVIEW_COLUMN, write_rows_to_excel
+from .dataset import PROGRAM_VERSION, SCHEMA_VERSION, page_record
 
 STATE_FILE = ".taipower_ocr_state.json"
 LOCK_FILE = ".taipower_ocr.lock"
 LOG_FILE = "taipower_ocr.log"
 WORKBOOK = "taipower_bills.xlsx"
+JSON_DIR = "json"
+
+PAGE_COLUMNS = [
+    "file", "page", "document_type", "customer_number", "billing_period_start",
+    "billing_period_end", "total_amount_twd", "needs_review", "fields_recognized",
+    "fields_unrecognized", "engines_agree", "engines_disagree",
+    "filled_from_cross_check", "primary_only", "warnings",
+]
+_CONTEXT = ["file", "page", "customer_number", "billing_period_start", "billing_period_end"]
+SHEET_COLUMNS = {
+    "Pages": [*PAGE_COLUMNS, "processed_at", "program_version"],
+    "Fields": [
+        *_CONTEXT, "block", "block_label", "key", "label", "value", "recognized",
+        "status", "cross_check_value", "source", "x", "y", "width", "height",
+    ],
+    "TableRows": [
+        *_CONTEXT, "block", "table", "table_label", "row", "column", "column_label", "value",
+    ],
+    "Files": ["file", "status", "pages", "needs_review", "processed_at", "attempts", "error"],
+}
 
 log = logging.getLogger("taipower_bill_ocr.watcher")
 
@@ -138,12 +160,21 @@ class FolderProcessor:
             return
         attempts = previous.get("attempts", 0) + 1 if previous.get("sha256") == digest else 1
 
-        rows: list[dict[str, Any]] = []
+        pages: list[dict[str, Any]] = []
         errors: list[str] = []
         started = time.perf_counter()
-        for event in iter_batch([path], self.extractor, source_name=lambda _: key):
-            if isinstance(event, PageDone) and event.record is not None:
-                rows.append(event.record.row)
+        for event in iter_batch(
+            [path], self.extractor, source_name=lambda _: key, cross_check_all_pages=True
+        ):
+            if isinstance(event, PageDone) and event.bill is not None:
+                record = page_record(
+                    event.bill,
+                    file=key,
+                    page=event.page_number,
+                    cross_check=event.cross_check,
+                    cross_check_error=event.cross_check_error,
+                )
+                pages.append(record.as_json())
             elif isinstance(event, FileFinished) and event.error:
                 errors.append(event.error)
 
@@ -153,44 +184,109 @@ class FolderProcessor:
             "mtime": stat.st_mtime,
             "processed_at": datetime.now().isoformat(timespec="seconds"),
             "attempts": attempts,
-            "rows": rows,
         }
         if errors:
             entry.update(status="failed", error="; ".join(errors))
             log.warning("Failed %s (attempt %d/%d): %s", key, attempts, self.config.max_attempts, entry["error"])
         else:
-            entry["status"] = "done"
-            review = sum(1 for row in rows if row.get(REVIEW_COLUMN))
-            log.info("Processed %s: %d bill row(s), %d need review, %.0fs", key, len(rows), review, time.perf_counter() - started)
+            review = sum(1 for page in pages if page["summary"]["needs_review"])
+            entry.update(status="done", pages=len(pages), needs_review=review)
+            self._write_json(key, digest, entry["processed_at"], pages)
+            log.info("Processed %s: %d page(s), %d need review, %.0fs", key, len(pages), review, time.perf_counter() - started)
         self.state["files"][key] = entry
         self._save_state()
         self.workbook_dirty = True
 
-    # --------------------------------------------------------------- workbook
-    def write_workbook(self) -> bool:
-        """Rewrite the cumulative workbook; False if Excel has it locked."""
-        from openpyxl import load_workbook
+    def _json_path(self, key: str) -> Path:
+        return self.config.output_dir / JSON_DIR / f"{key}.json"
 
-        files = sorted(self.state["files"].items(), key=lambda item: item[0])
-        rows = [row for _, entry in files for row in entry.get("rows", [])]
+    def _write_json(self, key: str, digest: str, processed_at: str, pages: list[dict[str, Any]]) -> None:
+        document = {
+            "schema_version": SCHEMA_VERSION,
+            "program_version": PROGRAM_VERSION,
+            "file": key,
+            "sha256": digest,
+            "processed_at": processed_at,
+            "ocr": {
+                "primary": "windows" if self.config.ocr_backend == "windows" else "paddleocr",
+                "cross_check": "windows" if self.config.ocr_backend == "crosscheck" else None,
+                "dpi": self.config.dpi,
+            },
+            "pages": pages,
+        }
+        target = self._json_path(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_suffix(".tmp")
+        temp.write_text(json.dumps(document, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(temp, target)
+
+    # --------------------------------------------------------------- workbook
+    def _sheet_rows(self) -> dict[str, list[list[Any]]]:
+        sheets: dict[str, list[list[Any]]] = {name: [] for name in SHEET_COLUMNS}
+        for key, entry in sorted(self.state["files"].items()):
+            sheets["Files"].append(
+                [key, entry["status"], entry.get("pages"), entry.get("needs_review"),
+                 entry["processed_at"], entry["attempts"], entry.get("error")]
+            )
+            if entry["status"] != "done":
+                continue
+            try:
+                document = json.loads(self._json_path(key).read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            for page in document["pages"]:
+                summary = page["summary"]
+                context = [summary["file"], summary["page"], summary["customer_number"],
+                           summary["billing_period_start"], summary["billing_period_end"]]
+                sheets["Pages"].append(
+                    [summary.get(column) for column in PAGE_COLUMNS]
+                    + [document["processed_at"], document["program_version"]]
+                )
+                for item in page["fields"]:
+                    box = item["bbox"] or {}
+                    sheets["Fields"].append(
+                        context
+                        + [item["block"], item["block_label"], item["key"], item["label"],
+                           item["value"], item["recognized"], item["status"],
+                           item["cross_check_value"], item["source"],
+                           box.get("x"), box.get("y"), box.get("width"), box.get("height")]
+                    )
+                for cell in page["table_rows"]:
+                    sheets["TableRows"].append(
+                        context
+                        + [cell["block"], cell["table"], cell["table_label"], cell["row"],
+                           cell["column"], cell["column_label"], cell["value"]]
+                    )
+        return sheets
+
+    def write_workbook(self) -> bool:
+        """Rewrite the cumulative workbook; False if Excel has it locked.
+
+        Every sheet is an Excel table named like the sheet, so Power Query can
+        read Pages, Fields, TableRows and Files directly.
+        """
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+
+        sheets = self._sheet_rows()
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        for name, columns in SHEET_COLUMNS.items():
+            sheet = workbook.create_sheet(name)
+            sheet.append(columns)
+            for row in sheets[name]:
+                sheet.append(row)
+            sheet.freeze_panes = "A2"
+            for index, column in enumerate(columns, start=1):
+                sheet.column_dimensions[get_column_letter(index)].width = max(12, min(len(column) + 4, 40))
+            if sheets[name]:
+                table = Table(displayName=name, ref=f"A1:{get_column_letter(len(columns))}{len(sheets[name]) + 1}")
+                table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+                sheet.add_table(table)
+
         target = self.config.output_dir / WORKBOOK
         temp = target.with_name(f"~tmp_{target.name}")
-        write_rows_to_excel(rows, temp)
-        workbook = load_workbook(temp)
-        sheet = workbook.create_sheet("Files")
-        sheet.append(["File", "Status", "Bill rows", "Need review", "Processed at", "Attempts", "Error"])
-        for key, entry in files:
-            sheet.append(
-                [
-                    key,
-                    entry["status"],
-                    len(entry.get("rows", [])),
-                    sum(1 for row in entry.get("rows", []) if row.get(REVIEW_COLUMN)),
-                    entry["processed_at"],
-                    entry["attempts"],
-                    entry.get("error"),
-                ]
-            )
         workbook.save(temp)
         try:
             os.replace(temp, target)
@@ -199,7 +295,10 @@ class FolderProcessor:
             temp.unlink(missing_ok=True)
             return False
         self.workbook_dirty = False
-        log.info("Updated %s (%d bill row(s))", target.name, len(rows))
+        log.info(
+            "Updated %s (%d page(s), %d field(s))",
+            target.name, len(sheets["Pages"]), len(sheets["Fields"]),
+        )
         return True
 
     def run_once(self) -> dict[str, int]:
