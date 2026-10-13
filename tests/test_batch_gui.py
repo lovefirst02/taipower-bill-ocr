@@ -81,7 +81,7 @@ class RecomputeTests(unittest.TestCase):
         row = bill_to_record(high_voltage_bill()).row
         row["流動電費"] = 130000
         recompute_other_adjustment(row)
-        self.assertEqual(row["其他調整費用"], -43095)
+        self.assertEqual(row["其他調整費用"], -5000)
         row["基本電費"] = None
         recompute_other_adjustment(row)
         self.assertIsNone(row["其他調整費用"])
@@ -228,7 +228,7 @@ class GuiEditFlowTests(unittest.TestCase):
         app._commit_and_advance("基本電費")
         row = app.results["row0"].row
         self.assertEqual(row["基本電費"], 700000)
-        self.assertEqual(row["其他調整費用"], -33095)
+        self.assertEqual(row["其他調整費用"], 5000)
         self.assertIn("基本電費", app.results["row0"].edited)
 
         entry.delete(0, "end")
@@ -281,7 +281,7 @@ class CrossCheckBatchTests(unittest.TestCase):
         self.assertIn("Basic Charge filled in from Windows OCR", notes)
         self.assertIn("Engines disagree on Energy Charge: 120,000 vs Windows OCR 125,000", notes)
         # Computed from merged values, so the filled-in gap no longer blocks it.
-        self.assertEqual(record.row["其他調整費用"], -33095)
+        self.assertEqual(record.row["其他調整費用"], 5000)
 
     def test_cross_check_failure_keeps_primary_result(self):
         record = self.page(CrossCheckExtractor(cross_check_error="no OCR language")).record
@@ -327,5 +327,5 @@ class GuiAlternativeTests(unittest.TestCase):
         app._use_alternative("流動電費")
         row = app.results["row0"].row
         self.assertEqual(row["流動電費"], 125000)
-        self.assertEqual(row["其他調整費用"], -38095)
+        self.assertEqual(row["其他調整費用"], 0)
         self.assertFalse(button.grid_info())

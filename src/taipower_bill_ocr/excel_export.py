@@ -280,10 +280,7 @@ def bill_to_record(
     if period_issue := _period_issue(row["Billing Period 計費期間"]):
         issues.append(period_issue)
 
-    pretax, basic, energy = row["稅前應繳總金額"], row["基本電費"], row["流動電費"]
-    power_factor = row["功率因數調整費"]
-    required = {"稅前應繳總金額": pretax, "基本電費": basic, "流動電費": energy}
-    missing = [label for label, value in required.items() if not _is_number(value)]
+    missing = recompute_other_adjustment(row)
     if missing:
         missing_en = ", ".join(COLUMN_LABELS_EN[label] for label in missing)
         issues.append(
@@ -293,17 +290,14 @@ def bill_to_record(
                 [*missing, "其他調整費用"],
             )
         )
-    else:
-        if not _is_number(power_factor):
-            power_factor = 0
-            issues.append(
-                Issue(
-                    "未辨識功率因數調整費，其他調整費用以 0 計算",
-                    "Power factor adjustment not found; counted as 0 in other adjustments",
-                    ["功率因數調整費"],
-                )
+    elif not _is_number(row["功率因數調整費"]):
+        issues.append(
+            Issue(
+                "未辨識功率因數調整費，其他調整費用以 0 計算",
+                "Power factor adjustment not found; counted as 0 in other adjustments",
+                ["功率因數調整費"],
             )
-        row["其他調整費用"] = round(pretax - basic - energy - power_factor, 2)
+        )
 
     if total_issue := _total_issue(row, tax):
         issues.append(total_issue)
@@ -322,17 +316,30 @@ def bill_to_record(
     return BillRecord(row, issues, alternatives)
 
 
-OTHER_ADJUSTMENT_INPUTS = ("稅前應繳總金額", "基本電費", "流動電費", "功率因數調整費")
+# The charge lines are printed tax-inclusive and add up to 應繳總金額 (稅前
+# 應繳總金額 is that total before tax), so the remainder after the itemised
+# columns is everything else listed under 計費內容: 優惠金額, 電子帳單優惠,
+# 電器租費, 配合減少用電減收, and any line the parser does not know yet.
+OTHER_ADJUSTMENT_REQUIRED = ("應繳總金額", "基本電費", "流動電費")
+OTHER_ADJUSTMENT_INPUTS = (*OTHER_ADJUSTMENT_REQUIRED, "功率因數調整費", "預繳費用")
 
 
-def recompute_other_adjustment(row: dict[str, Any]) -> None:
-    """Refresh 其他調整費用 after a manual correction to its inputs."""
-    pretax, basic, energy, power_factor = (row.get(key) for key in OTHER_ADJUSTMENT_INPUTS)
-    if not all(_is_number(value) for value in (pretax, basic, energy)):
+def recompute_other_adjustment(row: dict[str, Any]) -> list[str]:
+    """Set 其他調整費用 from the row; returns the required columns that are missing.
+
+    其他調整費用 = 應繳總金額 − 基本電費 − 流動電費 − 功率因數調整費 − 預繳費用.
+    A missing power factor adjustment or prepayment counts as 0, since many
+    bills do not print those lines.
+    """
+    missing = [key for key in OTHER_ADJUSTMENT_REQUIRED if not _is_number(row.get(key))]
+    if missing:
         row["其他調整費用"] = None
-        return
-    power_factor = power_factor if _is_number(power_factor) else 0
-    row["其他調整費用"] = round(pretax - basic - energy - power_factor, 2)
+        return missing
+    total, basic, energy, power_factor, prepaid = (
+        row.get(key) if _is_number(row.get(key)) else 0 for key in OTHER_ADJUSTMENT_INPUTS
+    )
+    row["其他調整費用"] = round(total - basic - energy - power_factor - prepaid, 2)
+    return []
 
 
 def bill_to_row(bill: BillResult, source: str | None = None) -> dict[str, Any]:

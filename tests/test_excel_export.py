@@ -66,11 +66,21 @@ class ExcelRowTests(unittest.TestCase):
         self.assertEqual(row["來源檔案"], "bill.pdf")
         self.assertEqual(row["頁碼"], 1)
 
-    def test_other_adjustment_is_pretax_minus_known_charges(self):
+    def test_other_adjustment_is_total_due_minus_itemised_charges(self):
         row = bill_to_row(high_voltage_bill())
-        # 761905 - 700000 - 120000 - (-25000)
-        self.assertEqual(row["其他調整費用"], -33095)
+        # 800000 - 700000 - 120000 - (-25000): the official sample's only other
+        # charge line is 分攤公共電費 5,000.
+        self.assertEqual(row["其他調整費用"], 5000)
         self.assertIsNone(row["需人工檢查"])
+
+    def test_prepayment_is_not_counted_twice(self):
+        row = bill_to_row(high_voltage_bill(prepaid_applied_twd=-3000, total_amount_twd=797000))
+        self.assertEqual(row["預繳費用"], -3000)
+        self.assertEqual(row["其他調整費用"], 5000)
+
+    def test_missing_pretax_total_does_not_block_other_adjustment(self):
+        row = bill_to_row(high_voltage_bill(pretax_total_twd=None))
+        self.assertEqual(row["其他調整費用"], 5000)
 
     def test_detailed_layout_reads_energy_usage_block(self):
         bill = high_voltage_bill()
@@ -88,7 +98,7 @@ class ExcelRowTests(unittest.TestCase):
             high_voltage_bill(power_factor_adjustment_twd=None, pretax_total_twd=830000,
                               total_amount_twd=871500, business_tax_twd=41500)
         )
-        self.assertEqual(row["其他調整費用"], 10000)
+        self.assertEqual(row["其他調整費用"], 51500)
         self.assertIn("功率因數調整費", row["需人工檢查"])
 
     def test_flags_reversed_billing_period(self):
@@ -123,7 +133,7 @@ class ExcelWriteTests(unittest.TestCase):
             customer_cell = sheet.cell(row=2, column=2)
             self.assertEqual(customer_cell.value, "00-12-3456-78-9")
             self.assertEqual(customer_cell.number_format, "@")
-            self.assertEqual(sheet.cell(row=2, column=15).value, -33095)
+            self.assertEqual(sheet.cell(row=2, column=15).value, 5000)
 
 
 
