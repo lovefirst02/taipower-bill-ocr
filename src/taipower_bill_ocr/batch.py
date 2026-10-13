@@ -210,6 +210,14 @@ def iter_batch(
                 if charge_page:
                     record = _build_record(bill, source_name(path), cross_check, cross_check_error)
                     locations = locate_fields(bill, record.row)
+                    if cross_check is not None:
+                        # A value filled in from the cross-check engine is only
+                        # in its OCR lines; both engines read the same page
+                        # image, so its exact position can be used directly.
+                        for column, location in locate_fields(cross_check, record.row).items():
+                            current = locations.get(column)
+                            if location.exact and (current is None or not current.exact):
+                                locations[column] = location
                 else:
                     record, locations = None, {}
                 yield PageDone(

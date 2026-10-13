@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import uuid
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -67,44 +67,56 @@ def _new_id() -> str:
 def default_marks(
     locations: Mapping[str, FieldLocation | Mapping[str, Any]],
     image_size: tuple[int, int],
+    row: Mapping[str, Any] | None = None,
+    printed: list[tuple[float, float, float, float]] | None = None,
+    regions: list[tuple[float, float, float, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Initial highlights and red labels from where the fields were read.
 
-    Returns the marks and notes for the reviewer (e.g. the pre-tax amount is
-    not printed, or only the surrounding block was found).
+    Only fields with a value on this bill are marked (residential bills have
+    no pre-tax line, so the total is used). When just the surrounding block
+    was found, a small highlight is placed at its top for the reviewer to
+    drag onto the value, rather than painting the whole block.
+    Returns the marks and notes for the reviewer.
     """
-    width, _ = image_size
+    width, height = image_size
+
+    def unpack(location: FieldLocation | Mapping[str, Any]) -> tuple[tuple[float, ...], bool]:
+        if isinstance(location, FieldLocation):
+            return tuple(location.box), location.exact
+        return tuple(location["box"]), bool(location["exact"])
+
     marks: list[dict[str, Any]] = []
     notes: list[str] = []
+    # Printed text (OCR line boxes) and marks already placed: labels avoid both.
+    taken: list[tuple[float, ...]] = list(printed or [])
     for target in EVIDENCE_TARGETS:
-        column, location = next(
-            ((column, locations[column]) for column in target["columns"] if column in locations),
-            (None, None),
-        )
-        if location is None:
+        candidates = [
+            (column, *unpack(locations[column]))
+            for column in target["columns"]
+            if column in locations and (row is None or row.get(column) is not None)
+        ]
+        chosen = next((candidate for candidate in candidates if candidate[2]), None) or next(iter(candidates), None)
+        if chosen is None:
             notes.append(f"{target['label']}: position not found, add the mark by hand")
             continue
-        box, exact = (
-            (location.box, location.exact)
-            if isinstance(location, FieldLocation)
-            else (tuple(location["box"]), location["exact"])
-        )
+        column, box, exact = chosen
         if column != target["columns"][0]:
             notes.append(f"{target['label']}: no pre-tax line on this bill, marked {column} instead")
-        if not exact:
-            notes.append(f"{target['label']}: exact line not found, check the mark")
         x, y, w, h = box
+        if not exact:
+            notes.append(f"{target['label']}: exact line not found, drag the highlight onto {column}")
+            y += min(80.0, h * 0.06)  # below the block's title bar, where it is visible
+            h = max(24.0, height * 0.02)
+            w = min(w, width * 0.35)
         group = _new_id()
         marks.append(
             {"id": _new_id(), "type": "highlight", "group": group, "x": x, "y": y, "w": w, "h": h}
         )
         font_size = max(28.0, min(h * 1.1, 60.0))
         text_w, text_h = label_size(target["label"], font_size)
-        # Beside the highlight when it fits on the page, otherwise above it.
-        if x + w + 16 + text_w <= width:
-            label_x, label_y = x + w + 16, y + (h - text_h) / 2
-        else:
-            label_x, label_y = max(0, x + w - text_w), max(0, y - text_h - 12)
+        label_x, label_y = _label_position((x, y, w, h), (text_w, text_h), (width, height), taken, regions or [])
+        taken += [(x, y, w, h), (label_x, label_y, text_w, text_h)]
         marks.append(
             {
                 "id": _new_id(), "type": "label", "group": group, "text": target["label"],
@@ -112,6 +124,63 @@ def default_marks(
             }
         )
     return marks, notes
+
+
+def _overlap(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    width = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    height = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return width * height if width > 0 and height > 0 else 0.0
+
+
+def _label_position(
+    box: tuple[float, float, float, float],
+    text: tuple[float, float],
+    page: tuple[int, int],
+    obstacles: list[tuple[float, ...]],
+    regions: Sequence[tuple[float, ...]] = (),
+) -> tuple[float, float]:
+    """Where a red label covers the least printed text, close to its highlight.
+
+    Tries beside, above and below the highlight (one to three lines away),
+    scoring each by the printed text it would hide, the part of it that
+    sticks out of a block it partly overlaps (so it never straddles a block
+    border) and whether it falls outside every block (gaps hold borders and
+    graphics OCR cannot see), then by the gap to its highlight. Block
+    detection is approximate on some layouts, so any block will do.
+    """
+    x, y, w, h = box
+    text_w, text_h = text
+    gap = 12
+    step = text_h + 8
+    columns = [x + w + 16, x, x + w - text_w, x - text_w - 16]
+    rows = [y + (h - text_h) / 2] + [y - gap - text_h - step * n for n in range(3)] + [y + h + gap + step * n for n in range(3)]
+    best: tuple[float, float, float, float] | None = None
+    for left in columns:
+        for top in rows:
+            if left < 0 or top < 0 or left + text_w > page[0] or top + text_h > page[1]:
+                continue
+            spot = (left, top, text_w, text_h)
+            if _overlap(spot, box):
+                continue  # never on top of its own highlight
+            hidden = sum(_overlap(spot, obstacle) for obstacle in obstacles)
+            area = text_w * text_h
+            inside_any = False
+            for region in regions:
+                inside = _overlap(spot, region)
+                if 0 < inside < area:
+                    hidden += area - inside
+                inside_any = inside_any or inside >= area
+            # Gaps between blocks hold borders and graphics OCR does not see.
+            if regions and not inside_any:
+                hidden += area
+            # Gap between the label and its highlight, edge to edge.
+            distance = max(0.0, left - (x + w), x - (left + text_w)) + max(0.0, top - (y + h), y - (top + text_h))
+            score = (hidden, distance)
+            if best is None or score < best[:2]:
+                best = (hidden, distance, left, top)
+    if best is None:
+        return max(0, min(x, page[0] - text_w)), max(0, y - text_h - gap)
+    return best[2], best[3]
 
 
 def draw_png(image: Image.Image, marks: list[Mapping[str, Any]]) -> Image.Image:

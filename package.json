@@ -1,0 +1,15 @@
+{
+  "name": "taipower-bill-ocr-monorepo",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "uv run --package taipower-web-api uvicorn taipower_web_api.main:create_app --factory --reload --reload-dir apps/api/src --port 8765",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/web",
+    "test": "npm test -w apps/web && uv run python -m unittest discover -s apps/api/tests"
+  },
+  "devDependencies": {
+    "concurrently": "9.1.0"
+  }
+}

@@ -236,11 +236,20 @@ def create_app(
     @app.post("/api/items/{page_id}/reset-marks")
     def reset_marks(page_id: int) -> dict[str, Any]:
         page = page_or_404(page_id)
+        if page["status"] == "submitted":
+            raise HTTPException(409, "already submitted; reopen it to edit")
         locations = {
             column: evidence.FieldLocation(tuple(value["box"]), value["exact"])
             for column, value in (page["locations"] or {}).items()
         }
-        marks, notes = evidence.default_marks(locations, (page["image_width"], page["image_height"]))
+        printed = [(line["x"], line["y"], line["width"], line["height"]) for line in page["dataset"]["ocr_lines"]]
+        regions = [
+            (bounds["x"], bounds["y"], bounds["width"], bounds["height"])
+            for bounds in page["dataset"].get("blocks", {}).values()
+        ]
+        marks, notes = evidence.default_marks(
+            locations, (page["image_width"], page["image_height"]), page["row"], printed, regions
+        )
         store.update_page(page_id, marks=marks, mark_notes=notes)
         return item(page_id)
 
@@ -287,4 +296,4 @@ def create_app(
 def run() -> None:
     import uvicorn
 
-    uvicorn.run("taipower_web_api.main:create_app", factory=True, host="127.0.0.1", port=8000)
+    uvicorn.run("taipower_web_api.main:create_app", factory=True, host="127.0.0.1", port=8765)

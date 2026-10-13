@@ -189,6 +189,29 @@ class FieldLocatorTests(unittest.TestCase):
         self.assertLess(billed.box[1], 1100)
         self.assertGreater(transferred.box[1], 1150)
 
+    def test_label_in_an_unexpected_block_is_found_page_wide(self):
+        from taipower_bill_ocr.parser import OcrLine
+
+        # Residential layouts print 計費期間 in the bottom-left (invoice) block.
+        self.bill.ocr_lines += [
+            OcrLine("計費期間", 153, 1537, 100, 30, "invoice_info"),
+            OcrLine("113/02/06至113/04/09", 412, 1538, 220, 30, "invoice_info"),
+        ]
+        location = self.locate("Billing Period 計費期間", "113/02/06~113/04/09")
+        self.assertTrue(location.exact)
+        self.assertEqual(round(location.box[1]), 1533)
+
+    def test_value_cut_short_by_ocr_still_points_at_its_row(self):
+        from taipower_bill_ocr.parser import OcrLine
+
+        self.bill.ocr_lines += [
+            OcrLine("計費期間", 153, 1537, 100, 30, "invoice_info"),
+            OcrLine("113/02/06至113/0", 412, 1538, 200, 30, "invoice_info"),
+        ]
+        location = self.locate("Billing Period 計費期間", "113/02/06~113/04/09")
+        self.assertTrue(location.exact)
+        self.assertLess(location.box[3], 60)
+
     def test_unknown_position_falls_back_to_block(self):
         location = self.locate("預繳費用", None)
         self.assertFalse(location.exact)

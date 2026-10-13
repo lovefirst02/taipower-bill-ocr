@@ -1,0 +1,219 @@
+import { useCallback, useEffect, useState } from "react";
+import { api } from "../api";
+import { newHighlight, newLabel } from "../marks";
+import type { Column, Item, Mark, Row } from "../types";
+import { FieldForm } from "./FieldForm";
+import { MarksPanel } from "./MarksPanel";
+import { PageViewer } from "./PageViewer";
+
+interface Props {
+  itemId: number;
+  user: string;
+  columns: Column[];
+  onChanged: () => void;
+  onNext: () => void;
+  /** Messages that must outlive this view, e.g. after moving to the next bill. */
+  onNotify: (text: string) => void;
+}
+
+const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
+/** Same formula as the server: total − basic − energy − power factor − prepaid. */
+function withOtherAdjustment(row: Row): Row {
+  const total = number(row["應繳總金額"]);
+  const basic = number(row["基本電費"]);
+  const energy = number(row["流動電費"]);
+  const other =
+    total === null || basic === null || energy === null
+      ? null
+      : Math.round((total - basic - energy - (number(row["功率因數調整費"]) ?? 0) - (number(row["預繳費用"]) ?? 0)) * 100) / 100;
+  return { ...row, 其他調整費用: other };
+}
+
+export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: Props) {
+  const [item, setItem] = useState<Item | null>(null);
+  const [row, setRow] = useState<Row>({});
+  const [marks, setMarks] = useState<Mark[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null);
+  const [preview, setPreview] = useState<number | null>(null);
+
+  const load = useCallback((loaded: Item) => {
+    setItem(loaded);
+    setRow(loaded.row);
+    setMarks(loaded.marks);
+    setDirty(false);
+  }, []);
+
+  useEffect(() => {
+    setItem(null);
+    setSelectedId(null);
+    setFocused(null);
+    setMessage(null);
+    api.item(itemId).then(load).catch((error: Error) => setMessage({ kind: "error", text: error.message }));
+  }, [itemId, load]);
+
+  const editable = item?.status === "draft";
+
+  const run = async (action: () => Promise<Item>, done: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await action();
+      load(result);
+      const locked = result.locked_workbooks ?? [];
+      setMessage(
+        locked.length
+          ? { kind: "warn", text: `${done}, but ${locked.join(" and ")} is open in Excel — it will be updated on the next submit.` }
+          : { kind: "ok", text: done },
+      );
+      onChanged();
+      return result;
+    } catch (error) {
+      setMessage({ kind: "error", text: (error as Error).message });
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = () => run(() => api.save(itemId, user, row, marks), "Draft saved");
+  const submit = async () => {
+    const result = await run(() => api.submit(itemId, user, row, marks), "Submitted — saved to the shared Excel files with its evidence PDF");
+    if (result && !(result.locked_workbooks ?? []).length) {
+      onNotify(`${item?.filename ?? "Bill"} submitted — saved to the shared Excel files with its evidence PDF.`);
+      onNext();
+    }
+  };
+  const reopen = () => run(() => api.reopen(itemId, user), "Reopened for editing");
+  // Only the marks go back to the OCR positions; unsaved field edits stay.
+  const reset = async () => {
+    setBusy(true);
+    try {
+      const result = await api.resetMarks(itemId);
+      setItem((current) => (current ? { ...current, marks: result.marks, mark_notes: result.mark_notes } : current));
+      setMarks(result.marks);
+      setSelectedId(null);
+      setMessage({ kind: "ok", text: "Marks reset to the OCR positions" });
+    } catch (error) {
+      setMessage({ kind: "error", text: (error as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const showPreview = async () => {
+    if (dirty && editable && !(await save())) return;
+    setPreview(Date.now());
+  };
+
+  const changeMarks = (next: Mark[]) => {
+    setMarks(next);
+    setDirty(true);
+  };
+
+  // Delete removes the selected mark; Ctrl+S saves.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const typing = (event.target as HTMLElement).tagName === "INPUT";
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedId && editable && !typing) {
+        changeMarks(marks.filter((mark) => mark.id !== selectedId));
+        setSelectedId(null);
+      }
+      if (event.key === "s" && (event.ctrlKey || event.metaKey) && editable) {
+        event.preventDefault();
+        void save();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  if (!item) return <div className="review empty">{message ? message.text : "Loading…"}</div>;
+
+  const page = { width: item.image.width, height: item.image.height };
+  const focusBox = focused ? item.locations[focused]?.box ?? null : null;
+  const pageLabel = item.page ? ` · page ${item.page}` : "";
+
+  return (
+    <div className="review">
+      <header className="review-header">
+        <div>
+          <h2>{item.filename}{pageLabel}</h2>
+          <span className={`badge ${item.status}`}>{item.status === "submitted" ? `Submitted by ${item.submitted_by}` : "Draft"}</span>
+          {dirty && <span className="badge unsaved">Unsaved changes</span>}
+        </div>
+        <div className="actions">
+          <button onClick={showPreview} disabled={busy}>Preview evidence</button>
+          <a className="button" href={api.evidencePdfUrl(itemId)} onClick={(event) => { if (dirty) { event.preventDefault(); setMessage({ kind: "warn", text: "Save first so the PDF has your latest marks." }); } }}>
+            Download PDF
+          </a>
+          {editable ? (
+            <>
+              <button onClick={save} disabled={busy || !dirty}>Save draft</button>
+              <button className="primary" onClick={submit} disabled={busy}>Submit</button>
+            </>
+          ) : (
+            <button onClick={reopen} disabled={busy}>Reopen</button>
+          )}
+        </div>
+      </header>
+      {message && <div className={`message ${message.kind}`}>{message.text}</div>}
+      {item.issues.length > 0 && editable && (
+        <ul className="issues">
+          {item.issues.map((issue) => <li key={issue.en}>{issue.en}</li>)}
+        </ul>
+      )}
+      <div className="review-body">
+        <PageViewer
+          imageUrl={api.imageUrl(itemId)}
+          width={page.width}
+          height={page.height}
+          marks={marks}
+          selectedId={selectedId}
+          editable={editable}
+          focusBox={focusBox}
+          onSelect={setSelectedId}
+          onChange={changeMarks}
+        />
+        <aside className="side">
+          <MarksPanel
+            marks={marks}
+            notes={item.mark_notes}
+            selectedId={selectedId}
+            editable={editable}
+            onSelect={setSelectedId}
+            onChange={changeMarks}
+            onAddHighlight={() => { const mark = newHighlight(page); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
+            onAddLabel={(text) => { const mark = newLabel(page, text); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
+            onReset={reset}
+          />
+          <FieldForm
+            columns={columns}
+            row={row}
+            ocrRow={item.ocr_row}
+            issues={item.issues}
+            alternatives={item.alternatives}
+            editable={editable}
+            focused={focused}
+            onFocus={setFocused}
+            onChange={(column, value) => { setRow((current) => withOtherAdjustment({ ...current, [column]: value })); setDirty(true); }}
+          />
+        </aside>
+      </div>
+      {preview !== null && (
+        <div className="modal" onClick={() => setPreview(null)}>
+          <div className="modal-body" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Evidence preview — exactly what the PDF/PNG will show</h3>
+              <button onClick={() => setPreview(null)}>Close</button>
+            </div>
+            <img src={api.evidencePngUrl(itemId, preview)} alt="Evidence preview" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

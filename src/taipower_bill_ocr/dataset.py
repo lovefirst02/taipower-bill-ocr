@@ -166,6 +166,8 @@ class PageRecord:
     table_rows: list[dict[str, Any]]
     ocr_lines: list[dict[str, Any]]
     quality: dict[str, Any] = field(default_factory=dict)
+    # Where each detected block (用戶資訊, 計費內容, …) sits on the page image.
+    blocks: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -173,6 +175,7 @@ class PageRecord:
             "fields": self.fields,
             "table_rows": self.table_rows,
             "quality": self.quality,
+            "blocks": self.blocks,
             "ocr_lines": self.ocr_lines,
         }
 
@@ -682,4 +685,9 @@ def page_record(
         for line in lines
     ]
     quality = {key: value for key, value in (bill.get("quality") or {}).items() if key != "warnings"}
-    return PageRecord(summary, fields, table_rows, ocr_lines, quality)
+    blocks = {
+        key: block["bounds"]
+        for key, block in (bill.get("blocks") or {}).items()
+        if isinstance(block, dict) and block.get("bounds")
+    }
+    return PageRecord(summary, fields, table_rows, ocr_lines, quality, blocks)

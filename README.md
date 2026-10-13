@@ -482,3 +482,47 @@ powershell -ExecutionPolicy Bypass -File examples\power_query\build_report.ps1 -
 以 8 個樣本檔驗證：查詢結果與程式直接匯出的 17 欄 Excel 相同（同樣 8 張帳單、144 個資料格中 141 格
 相同）；其餘 3 格是代繳憑證上程式直接匯出讀不到、而總表透過第二階段補回且通過「各項加總＝應繳總金額」
 檢查的流動電費、功率因數調整費與據此算出的其他調整費用。
+
+## 網頁版（批量上傳、檢查、證據標記）
+
+Monorepo 結構：OCR 核心在專案根目錄（`src/taipower_bill_ocr`），後端 `apps/api`（FastAPI，與核心同一個
+uv workspace），前端 `apps/web`（React + TypeScript + Vite，npm workspaces）。
+
+```powershell
+uv sync --all-packages --extra app --group test   # 後端與 OCR
+npm install                                        # 前端
+npm run dev        # 開發：後端 http://127.0.0.1:8765、前端 http://localhost:5173（自動轉送 /api）
+npm run build      # 正式：建置前端後，只需執行後端，網址 http://127.0.0.1:8765
+uv run taipower-web
+npm test           # 前端與後端測試
+```
+
+使用流程：
+
+1. 第一次開啟時輸入名字（不需密碼），之後的上傳與匯出都以此區分。
+2. 把多個 PDF／PNG／JPG 拖到左側（或點擊選擇），背景逐一以 PaddleOCR＋Windows OCR 交叉檢查辨識，
+   左側顯示進度。帳單背面（電表資料）會保留在完整總表中，但不需檢查。
+3. 點選帳單：左側為原圖，右側為 17 欄欄位。需檢查的欄位為黃色，點選欄位時原圖會捲動並框出位置；
+   兩個 OCR 引擎讀法不同時可一鍵改用另一個讀法。修改金額時其他調整費用即時重算。
+4. 證據標記：自動在「計費期間」與「稅前應繳總金額」（住宅帳單沒有這一列時改標「應繳總金額」並提示）
+   畫上黃色螢光，並在空白處以紅色手寫字標註 **Billing period** 與 **Grey Electricity Cost**。
+   標記可拖曳、拉角縮放、修改文字與字級、新增或刪除；「Reset」只還原標記，不影響未存的欄位。
+   「Preview evidence」顯示伺服器實際輸出的圖，與下載的 PDF／PNG 相同。
+5. 「Submit」送出：寫入證據 PDF（PDF 上傳時保留原始向量內容並疊上標記），並重建兩個共用 Excel：
+   - `taipower_bills_17.xlsx`：每張帳單一列的 17 欄格式，加上上傳者、送出時間與證據檔路徑。
+   - `taipower_bills.xlsx`：完整總表（Pages／Fields／TableRows／Files），人工修正的值標為
+     `reviewer_corrected`，原 OCR 讀值保留在 `cross_check_value`。
+   Excel 被開啟時會提示，下一次送出時再寫入。送出後如需修改可按「Reopen」。
+6. 「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
+
+設定（環境變數）：
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `TAIPOWER_DATA_DIR` | `data` | 上傳檔、資料庫 |
+| `TAIPOWER_OUTPUT_DIR` | `data/output` | 兩個共用 Excel 與 `evidence\`；可設為 OneDrive 同步的 SharePoint 資料夾 |
+| `TAIPOWER_OCR_BACKEND` | `crosscheck` | 或 `paddleocr`、`windows` |
+| `TAIPOWER_DPI` | `200` | PDF 轉圖解析度 |
+
+紅色手寫字使用 Windows 內建的 Ink Free 字型（沒有時改用 Segoe Print）。後端需在 Windows 上執行
+（Windows OCR 交叉檢查）。

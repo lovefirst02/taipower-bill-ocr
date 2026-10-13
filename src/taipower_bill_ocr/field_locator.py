@@ -127,51 +127,92 @@ def _value_candidates(label: OcrLine, scope: list[OcrLine]) -> list[OcrLine]:
     return sorted(beside, key=lambda line: line.x) + sorted(below, key=lambda line: line.y)
 
 
+def _truncated_reading(line: OcrLine, value: Any) -> bool:
+    """A text value cut short by OCR, e.g. '113/02/06至113/0' for a period."""
+    if value is None or isinstance(value, (int, float)):
+        return False
+    wanted = re.sub(r"\D", "", str(value))
+    read = re.sub(r"\D", "", line.text)
+    return len(wanted) >= 6 and len(read) >= 6 and wanted[:6] == read[:6]
+
+
+def _search(
+    bill: BillResult, scope: list[OcrLine], aliases: tuple[str, ...], value: Any, block_key: str | None
+) -> tuple[FieldLocation | None, Box | None]:
+    """Find ``value`` beside one of its labels in ``scope``.
+
+    Returns an exact location, or the label's row as a fallback when the
+    value printed there was cut short by OCR.
+    """
+    fallback: Box | None = None
+    labels = [line for line in scope if any(_compact(line.text).startswith(alias) for alias in aliases)]
+    for label in sorted(labels, key=lambda line: line.y):
+        if _matches_value(label, value):
+            return FieldLocation(_union([label]), True), None
+        candidates = _value_candidates(label, scope)
+        match = next((line for line in candidates if _matches_value(line, value)), None)
+        if match is None and value is not None:
+            # Table columns wrap a value over two lines under the heading
+            # (計費期間 / 109/12/01~ / 109/12/31).
+            for first, second in zip(candidates, candidates[1:]):
+                joined = OcrLine(first.text + second.text, first.x, first.y, first.width, first.height)
+                if _matches_value(joined, value):
+                    return FieldLocation(_union([label, first, second]), True), None
+        if match is None and candidates and value is not None:
+            partial = next((line for line in candidates if _truncated_reading(line, value)), None)
+            if partial is not None and fallback is None:
+                fallback = _union([label, partial])
+            continue  # this label's neighbour holds a different value
+        if match is None:
+            # Value missing: point at the label row where it should appear.
+            bounds = bill.get(f"blocks.{block_key}.bounds") if block_key else None
+            right = bounds["x"] + bounds["width"] if bounds else label.x + label.width * 3
+            return FieldLocation(
+                (label.x - 4, label.y - 4, right - label.x + 8, label.height + 8), True
+            ), None
+        return FieldLocation(_union([label, match]), True), None
+    if value is not None:
+        matches = [line for line in scope if _matches_value(line, value)]
+        if len(matches) == 1:
+            return FieldLocation(_union(matches), True), None
+    return None, fallback
+
+
 def locate_field(
     bill: BillResult, column: str, value: Any
 ) -> FieldLocation | None:
-    """Return where ``column``'s value is printed, or its block as a fallback."""
+    """Return where ``column``'s value is printed, or its block as a fallback.
+
+    The blocks the value normally sits in are searched first, then the whole
+    page (layouts differ: residential bills print 計費期間 in another block).
+    """
     hint = _FIELD_HINTS.get(column)
     if hint is None:
         return None
     block_keys, aliases, group_key = hint
     lines = list(bill.ocr_lines)
 
+    fallback: Box | None = None
     for block_key in block_keys:
         scope = [line for line in lines if line.block_key == block_key]
         if not scope and block_key == block_keys[0]:
             scope = [line for line in lines if line.block_key is None]
         if group_key:
             scope = _group_scope(scope, group_key)
-        labels = [
-            line
-            for line in scope
-            if any(_compact(line.text).startswith(alias) for alias in aliases)
-        ]
-        for label in sorted(labels, key=lambda line: line.y):
-            if _matches_value(label, value):
-                return FieldLocation(_union([label]), True)
-            candidates = _value_candidates(label, scope)
-            match = next((line for line in candidates if _matches_value(line, value)), None)
-            if match is None and candidates and value is not None:
-                continue  # this label's neighbour holds a different value
-            if match is None:
-                # Value missing: point at the label row where it should appear.
-                bounds = bill.get(f"blocks.{block_key}.bounds")
-                right = (
-                    bounds["x"] + bounds["width"]
-                    if bounds
-                    else label.x + label.width * 3
-                )
-                return FieldLocation(
-                    (label.x - 4, label.y - 4, right - label.x + 8, label.height + 8),
-                    True,
-                )
-            return FieldLocation(_union([label, match]), True)
-        if value is not None:
-            matches = [line for line in scope if _matches_value(line, value)]
-            if len(matches) == 1:
-                return FieldLocation(_union(matches), True)
+        found, partial = _search(bill, scope, aliases, value, block_key)
+        if found is not None:
+            return found
+        fallback = fallback or partial
+    if not group_key:  # kWh labels repeat per group, so never search them page-wide
+        hinted = set(block_keys)
+        for block_key in sorted({line.block_key for line in lines if line.block_key not in hinted}, key=str):
+            scope = [line for line in lines if line.block_key == block_key]
+            found, partial = _search(bill, scope, aliases, value, block_key)
+            if found is not None:
+                return found
+            fallback = fallback or partial
+    if fallback is not None:
+        return FieldLocation(fallback, True)
 
     for block_key in block_keys:
         bounds = bill.get(f"blocks.{block_key}.bounds")

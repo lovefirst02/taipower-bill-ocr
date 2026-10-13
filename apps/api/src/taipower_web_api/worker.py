@@ -115,16 +115,34 @@ class OcrWorker:
             cross_check_error=event.cross_check_error,
         ).as_json()
         width, height = render_page(path, event.page_number, self.settings.dpi).size
+        # A page counts as a bill when OCR found a charge breakdown with at
+        # least a period or an amount; an empty layout match (e.g. a photo
+        # that is not a bill) is kept for the record but not sent to review.
+        is_bill = event.record is not None and any(
+            event.record.row.get(column) is not None
+            for column in ("Billing Period 計費期間", "基本電費", "流動電費", "稅前應繳總金額", "應繳總金額")
+        )
         values: dict[str, Any] = {
             "page_number": event.page_number,
-            "is_bill": event.record is not None,
+            "is_bill": is_bill,
             "status": "draft",
             "dataset": dataset,
             "image_width": width,
             "image_height": height,
         }
-        if event.record is not None:
-            marks, notes = default_marks(event.locations, (width, height))
+        if is_bill:
+            # Red labels avoid text either engine read on the page.
+            printed = [
+                (line.x, line.y, line.width, line.height)
+                for bill in (event.bill, event.cross_check)
+                if bill is not None
+                for line in bill.ocr_lines
+            ]
+            regions = [
+                (bounds["x"], bounds["y"], bounds["width"], bounds["height"])
+                for bounds in dataset.get("blocks", {}).values()
+            ]
+            marks, notes = default_marks(event.locations, (width, height), event.record.row, printed, regions)
             values.update(
                 row=event.record.row,
                 ocr_row=dict(event.record.row),

@@ -178,6 +178,45 @@ class ApiTests(unittest.TestCase):
             result = self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"}).json()
         self.assertIn("taipower_bills_17.xlsx", result["locked_workbooks"])
 
+    def test_value_found_only_by_the_cross_check_engine_is_marked_exactly(self):
+        # Paddle missed the period; Windows OCR read it, so its line is used.
+        bill = official_sample_bill()
+        bill.ocr_lines = [line for line in bill.ocr_lines if "109/12" not in line.text and "計費期間" not in line.text]
+        bill["blocks"] = {"user_info": {"bounds": {"x": 96, "y": 634, "width": 559, "height": 1188}}}
+        windows = official_sample_bill()
+        FakeExtractor.cross_checks = True
+        try:
+            with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: bill), \
+                 mock.patch.object(FakeExtractor, "extract_cross_check", lambda self, path, page: windows, create=True):
+                self.upload("Amy", "jan.png")
+        finally:
+            FakeExtractor.cross_checks = False
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        period = detail["locations"]["Billing Period 計費期間"]
+        self.assertTrue(period["exact"])
+        self.assertLess(period["box"][3], 80)  # one line, not the whole block
+        self.assertEqual(detail["mark_notes"], [])
+
+    def test_block_only_location_gets_a_small_highlight_to_drag(self):
+        bill = official_sample_bill()
+        bill.ocr_lines = [line for line in bill.ocr_lines if "計費期間" not in line.text and "109/12" not in line.text]
+        bill["blocks"] = {"user_info": {"bounds": {"x": 96, "y": 634, "width": 559, "height": 1188}}}
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: bill):
+            self.upload("Amy", "jan.png")
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        labels = {mark["text"]: mark for mark in detail["marks"] if mark["type"] == "label"}
+        period = next(m for m in detail["marks"] if m["type"] == "highlight" and m["group"] == labels["Billing period"]["group"])
+        self.assertLess(period["h"], 100)  # not the 1188 px block
+        self.assertIn("Billing period: exact line not found, drag the highlight onto Billing Period 計費期間", detail["mark_notes"])
+
+    def test_image_that_is_not_a_bill_is_not_sent_to_review(self):
+        empty = BillResult({"document_type": "unknown", "quality": {"warnings": ["legacy_virtual_blocks"]}, "charge_info": {}})
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: empty):
+            self.upload("Amy", "photo.png")
+        uploads = self.client.get("/api/uploads", params={"user": "Amy"}).json()
+        self.assertEqual(uploads[0]["status"], "done")
+        self.assertEqual(self.client.get("/api/items", params={"user": "Amy"}).json(), [])
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
