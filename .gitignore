@@ -13,3 +13,7 @@ dist/
 samples/
 tmp/
 .venv-build/
+data/
+apps/web/node_modules/
+apps/web/dist/
+node_modules/

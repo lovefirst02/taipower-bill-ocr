@@ -37,5 +37,9 @@ taipower-bill-gui = "taipower_bill_ocr.gui:main"
 [dependency-groups]
 build = ["pyinstaller>=6.10"]
 
+[tool.uv.workspace]
+# Monorepo: the OCR core lives at the root; apps/api is the web backend.
+members = ["apps/api"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -29,34 +29,13 @@ from typing import Any, Callable
 
 from .batch import FileFinished, PageDone, PageExtractor, find_bill_files, iter_batch
 from .dataset import PROGRAM_VERSION, SCHEMA_VERSION, page_record
+from .master_workbook import SHEET_COLUMNS, add_document, empty_sheets, save_master
 
 STATE_FILE = ".taipower_ocr_state.json"
 LOCK_FILE = ".taipower_ocr.lock"
 LOG_FILE = "taipower_ocr.log"
 WORKBOOK = "taipower_bills.xlsx"
 JSON_DIR = "json"
-
-PAGE_COLUMNS = [
-    "file", "page", "document_type", "customer_number", "billing_period_start",
-    "billing_period_end", "total_amount_twd", "needs_review", "fields_recognized",
-    "fields_unrecognized", "engines_agree", "engines_disagree",
-    "filled_from_cross_check", "primary_only", "unverified", "resolved_by_check",
-    "confidence_high", "confidence_medium", "confidence_low", "confidence_review",
-    "charges_difference_twd", "tax_difference_twd", "supplemented_from_ocr_lines", "warnings",
-]
-_CONTEXT = ["file", "page", "customer_number", "billing_period_start", "billing_period_end"]
-SHEET_COLUMNS = {
-    "Pages": [*PAGE_COLUMNS, "processed_at", "program_version"],
-    "Fields": [
-        *_CONTEXT, "block", "block_label", "key", "label", "printed_label", "value",
-        "recognized", "status", "confidence", "checks", "cross_check_value", "source", "origin",
-        "x", "y", "width", "height",
-    ],
-    "TableRows": [
-        *_CONTEXT, "block", "table", "table_label", "row", "column", "column_label", "value",
-    ],
-    "Files": ["file", "status", "pages", "needs_review", "processed_at", "attempts", "error"],
-}
 
 log = logging.getLogger("taipower_bill_ocr.watcher")
 
@@ -225,7 +204,7 @@ class FolderProcessor:
 
     # --------------------------------------------------------------- workbook
     def _sheet_rows(self) -> dict[str, list[list[Any]]]:
-        sheets: dict[str, list[list[Any]]] = {name: [] for name in SHEET_COLUMNS}
+        sheets = empty_sheets()
         for key, entry in sorted(self.state["files"].items()):
             sheets["Files"].append(
                 [key, entry["status"], entry.get("pages"), entry.get("needs_review"),
@@ -237,31 +216,7 @@ class FolderProcessor:
                 document = json.loads(self._json_path(key).read_text(encoding="utf-8"))
             except FileNotFoundError:
                 continue
-            for page in document["pages"]:
-                summary = page["summary"]
-                context = [summary["file"], summary["page"], summary["customer_number"],
-                           summary["billing_period_start"], summary["billing_period_end"]]
-                sheets["Pages"].append(
-                    [summary.get(column) for column in PAGE_COLUMNS]
-                    + [document["processed_at"], document["program_version"]]
-                )
-                for item in page["fields"]:
-                    box = item["bbox"] or {}
-                    sheets["Fields"].append(
-                        context
-                        + [item["block"], item["block_label"], item["key"], item["label"],
-                           item.get("printed_label"), item["value"], item["recognized"],
-                           item["status"], item.get("confidence"), item.get("checks"),
-                           item["cross_check_value"], item["source"],
-                           item.get("origin"),
-                           box.get("x"), box.get("y"), box.get("width"), box.get("height")]
-                    )
-                for cell in page["table_rows"]:
-                    sheets["TableRows"].append(
-                        context
-                        + [cell["block"], cell["table"], cell["table_label"], cell["row"],
-                           cell["column"], cell["column_label"], cell["value"]]
-                    )
+            add_document(sheets, document)
         return sheets
 
     def write_workbook(self) -> bool:
@@ -270,34 +225,10 @@ class FolderProcessor:
         Every sheet is an Excel table named like the sheet, so Power Query can
         read Pages, Fields, TableRows and Files directly.
         """
-        from openpyxl import Workbook
-        from openpyxl.utils import get_column_letter
-        from openpyxl.worksheet.table import Table, TableStyleInfo
-
         sheets = self._sheet_rows()
-        workbook = Workbook()
-        workbook.remove(workbook.active)
-        for name, columns in SHEET_COLUMNS.items():
-            sheet = workbook.create_sheet(name)
-            sheet.append(columns)
-            for row in sheets[name]:
-                sheet.append(row)
-            sheet.freeze_panes = "A2"
-            for index, column in enumerate(columns, start=1):
-                sheet.column_dimensions[get_column_letter(index)].width = max(12, min(len(column) + 4, 40))
-            if sheets[name]:
-                table = Table(displayName=name, ref=f"A1:{get_column_letter(len(columns))}{len(sheets[name]) + 1}")
-                table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
-                sheet.add_table(table)
-
         target = self.config.output_dir / WORKBOOK
-        temp = target.with_name(f"~tmp_{target.name}")
-        workbook.save(temp)
-        try:
-            os.replace(temp, target)
-        except PermissionError:
+        if not save_master(target, sheets):
             log.warning("%s is open in another program; will retry next scan", target.name)
-            temp.unlink(missing_ok=True)
             return False
         self.workbook_dirty = False
         log.info(

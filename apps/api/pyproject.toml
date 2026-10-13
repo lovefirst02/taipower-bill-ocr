@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taipower-web-api"
+version = "0.1.0"
+description = "Web API for batch Taipower bill OCR, review and evidence marking"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "taipower-bill-ocr[app]",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "python-multipart>=0.0.9",
+  "pypdf>=5.0",
+  "reportlab>=4.2",
+]
+
+[project.scripts]
+taipower-web = "taipower_web_api.main:run"
+
+[dependency-groups]
+test = ["httpx>=0.27"]
+
+[tool.uv.sources]
+taipower-bill-ocr = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
