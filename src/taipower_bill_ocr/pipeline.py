@@ -10,6 +10,7 @@ from .parser import (
     enrich_bank_autopay_receipt,
     enrich_unruled_tables,
     parse_bill_layout,
+    refine_document_type,
 )
 from .windows_ocr import WindowsOcrEngine
 
@@ -194,6 +195,7 @@ def extract_bill(
     # Keep a parser-selected subtype while retaining the detector result for
     # legacy layouts whose parser does not set ``document_type``.
     document_type = result.get("document_type") or document_type
+    document_type = refine_document_type(result, lines, document_type)
     result["document_type"] = document_type
     result["quality"]["block_detection"] = detection_method
     for block_key, block_bounds in bounds.items():

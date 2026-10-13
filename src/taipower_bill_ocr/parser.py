@@ -1791,3 +1791,26 @@ def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
             **query_view,
         }
     )
+
+
+def refine_document_type(
+    result: BillResult, lines: Iterable[OcrLine], document_type: str
+) -> str:
+    """Tell high-voltage bills from ordinary ones by the printed tariff.
+
+    Residential and low-voltage bills share the pink block template, so the
+    layout detector alone reports them as high-voltage. The tariff (電價種類)
+    decides: 高壓 means high voltage, anything else (表燈, 低壓電力, …) is an
+    ordinary electricity bill. Back pages print no tariff and keep the type.
+    """
+    if document_type not in {"high_voltage_bill", "unknown"}:
+        return document_type
+    tariff = result.get("user_info.tariff_type")
+    if not tariff:
+        tariff = "".join(line.text for line in lines if line.block_key == "user_info")
+        if not re.search(r"表燈|電力|电力", tariff):
+            return document_type
+    tariff = str(tariff).replace("压", "壓")
+    if "高壓" in tariff:
+        return "high_voltage_bill"
+    return "electricity_bill"

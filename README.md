@@ -420,8 +420,17 @@ TaipowerBillOCR.exe --watch "C:\Users\me\公司\Bills" --output "C:\Users\me\公
 
 - 證據狀態（`Fields.status`）：`engines_agree` 兩個 OCR 引擎讀到相同值；`engines_disagree` 不同
   （`cross_check_value` 是另一個引擎的值，該頁會標記需人工檢查）；`filled_from_cross_check` 只有
-  Windows OCR 讀到；`primary_only` 只有 PaddleOCR 讀到；`unverified` 程式尚未認得的項目，以帳單上的
-  中文標籤保存（`recognized` 為 FALSE），品質不保證。
+  Windows OCR 讀到；`primary_only` 只有 PaddleOCR 讀到；`unverified` 只有一個引擎讀到、且程式尚未
+  認得的項目，品質不保證。
+- `recognized`：TRUE 表示欄位對應到固定的欄位代號；FALSE 表示程式尚未認得，以帳單上的中文標籤作為
+  `key` 保存。尚未認得的項目若兩個引擎讀到相同的標籤與值，狀態仍為 `engines_agree`。
+- `printed_label`：帳單上實際印的（或 OCR 讀到的）標籤與 `label` 不同時才有值，例如 OCR 把
+  「功率因數調整費」讀成「功率因數调整簧」時，欄位仍歸到功率因數調整費，原文保留在這裡供追查。
+  標籤只容許「同長度、錯一到兩個字」的誤讀，不會把「逾繳費期限」當成「繳費期限」。
+- `origin`：`parser` 由版面解析取得；`ocr_line` 由解析未用到的 OCR 文字補取，例如同一行的
+  「標籤：值」、跨行的地址、「本次抄表日/收費日：日期;日期」這類合併欄位。
+- `Pages.document_type`：`high_voltage_bill`（高壓，含背面）、`electricity_bill`（表燈、低壓等一般
+  電費單；依電價種類判斷）、`bank_autopay_receipt`（金融機構代繳憑證）、`unknown`。
 - `json\` 資料夾每份帳單一個 JSON，除上述內容外還保留原始 OCR 文字與座標，程式改進後可據此重新解析。
 - 處理紀錄在 `taipower_ocr.log`。
 - 原始 PDF 不會被搬移或修改。以檔案內容判斷是否處理過；內容不變不重跑，內容改了會重新處理並取代舊結果。

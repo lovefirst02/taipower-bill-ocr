@@ -43,6 +43,10 @@ class MissingValueDetectionTests(unittest.TestCase):
         # Its values are printed below the labels, not beside them.
         self.assertEqual(_labels_missing_values([label("應繳總金額", block="payment_info")]), [])
 
+    def test_misread_labels_are_still_retried(self):
+        lines = [label("流勤電费"), label("基本電费(约定)", y=90)]
+        self.assertEqual(len(_labels_missing_values(lines)), 2)
+
     def test_unknown_labels_are_ignored(self):
         self.assertEqual(_labels_missing_values([label("營業稅")]), [])
 

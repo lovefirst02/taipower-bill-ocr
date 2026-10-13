@@ -18,6 +18,7 @@ from .parser import (
     enrich_bank_autopay_receipt,
     enrich_unruled_tables,
     parse_bill_layout,
+    refine_document_type,
 )
 from .windows_ocr import WindowsOcrEngine
 
@@ -293,7 +294,28 @@ _RETRY_BLOCKS = {"user_info", "charge_info", "energy_usage", None}
 
 
 def _compact_label(text: str) -> str:
-    return re.sub(r"[\s:：()（）]", "", text).replace("缴", "繳")
+    from .dataset import _TRADITIONAL
+
+    return re.sub(r"[\s:：()（）]", "", text.translate(_TRADITIONAL))
+
+
+def _retry_alias(compact: str) -> str | None:
+    """The retry label ``compact`` starts with, allowing one misread glyph.
+
+    Low-resolution scans read 流動電費 as 流勤電费; folding simplified glyphs
+    handles 费, and one differing character is tolerated in longer labels.
+    """
+    exact = next((alias for alias in _RETRY_LABELS if compact.startswith(alias)), None)
+    if exact is not None:
+        return exact
+    close = [
+        alias
+        for alias in _RETRY_LABELS
+        if len(alias) >= 4
+        and len(compact) >= len(alias)
+        and sum(a != b for a, b in zip(alias, compact)) == 1
+    ]
+    return close[0] if len(close) == 1 else None
 
 
 def _labels_missing_values(lines: Sequence[OcrLine]) -> list[OcrLine]:
@@ -301,7 +323,7 @@ def _labels_missing_values(lines: Sequence[OcrLine]) -> list[OcrLine]:
     missing = []
     for label in lines:
         compact = _compact_label(label.text)
-        alias = next((a for a in _RETRY_LABELS if compact.startswith(a)), None)
+        alias = _retry_alias(compact)
         if alias is None or label.block_key not in _RETRY_BLOCKS:
             continue
         if re.search(r"\d", compact[len(alias):]):
@@ -413,6 +435,7 @@ def extract_bill_with_paddleocr(
     # coarse, pre-parser detector (which commonly reports photographed detailed
     # bills as ``unknown``).  Preserve that more specific classification.
     document_type = result.get("document_type") or document_type
+    document_type = refine_document_type(result, lines, document_type)
     result["document_type"] = document_type
     result["quality"]["block_detection"] = detection_method
     for block_key, block_bounds in bounds.items():
