@@ -28,7 +28,7 @@ from . import evidence
 from .reports import WorkbookWriter, archive_evidence, evidence_path, export_workbook, workbook_dir
 from .settings import Settings
 from .store import Store, now
-from .worker import OcrWorker
+from .worker import OcrWorker, usage_marks_for
 
 TEXT_COLUMNS = {"Billing Period 計費期間", "Custom No. 電號"}
 EDITABLE_COLUMNS = [column for column in COLUMNS if column not in {"其他調整費用", "來源檔案", "頁碼", "需人工檢查"}]
@@ -44,6 +44,8 @@ class Mark(BaseModel):
     text: str | None = None
     fontSize: float | None = None
     group: str | None = None
+    # Another page of the PDF (the bill's back page); None for the bill page.
+    page: int | None = None
 
 
 class ItemUpdate(BaseModel):
@@ -98,6 +100,33 @@ def create_app(
 
     def marks_of(page: dict[str, Any]) -> list[dict[str, Any]]:
         return page["marks"] or []
+
+    def view_pages(page: dict[str, Any]) -> list[dict[str, Any]]:
+        """The bill page and its back pages, which can also hold marks."""
+        return [page, *store.companion_pages(page)]
+
+    def view_page(page: dict[str, Any], number: int | None) -> dict[str, Any]:
+        if number is None or number == page["page_number"]:
+            return page
+        found = next((other for other in store.companion_pages(page) if other["page_number"] == number), None)
+        if found is None:
+            raise HTTPException(404, "page not found")
+        return found
+
+    def marks_on(page: dict[str, Any], shown: dict[str, Any]) -> list[dict[str, Any]]:
+        """The bill's marks that sit on ``shown`` (the bill page or a back page)."""
+        if shown["id"] == page["id"]:
+            return [mark for mark in marks_of(page) if mark.get("page") in (None, page["page_number"])]
+        return [mark for mark in marks_of(page) if mark.get("page") == shown["page_number"]]
+
+    def build_evidence_pdf(page: dict[str, Any]) -> bytes:
+        """The bill page, then each back page that has marks."""
+        pages = []
+        for shown in view_pages(page):
+            marks = marks_on(page, shown)
+            if shown["id"] == page["id"] or marks:
+                pages.append((shown["page_number"], page_image(shown), marks))
+        return evidence.evidence_pdf(Path(page["path"]), pages, settings.dpi)
 
     # --------------------------------------------------------------- columns
     @app.get("/api/columns")
@@ -214,15 +243,19 @@ def create_app(
             "marks": marks_of(page),
             "mark_notes": page["mark_notes"],
             "image": {"width": page["image_width"], "height": page["image_height"], "dpi": settings.dpi},
+            "pages": [
+                {"page": shown["page_number"], "width": shown["image_width"], "height": shown["image_height"], "bill": shown["id"] == page["id"]}
+                for shown in view_pages(page)
+            ],
             "submitted_at": page["submitted_at"],
             "submitted_by": page["submitted_by"],
         }
 
     @app.get("/api/items/{page_id}/image")
-    def image(page_id: int) -> Response:
-        page = page_or_404(page_id)
+    def image(page_id: int, page: int | None = None) -> Response:
+        shown = view_page(page_or_404(page_id), page)
         buffer = io.BytesIO()
-        page_image(page).save(buffer, format="PNG", optimize=True)
+        page_image(shown).save(buffer, format="PNG", optimize=True)
         return Response(buffer.getvalue(), media_type="image/png", headers={"Cache-Control": "max-age=3600"})
 
     def apply_update(page: dict[str, Any], update: ItemUpdate) -> dict[str, Any]:
@@ -259,9 +292,7 @@ def create_app(
         page = store.page(page_id)
         target = evidence_path(settings.output_dir, page)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(
-            evidence.pdf_bytes(Path(page["path"]), page["page_number"], page_image(page), settings.dpi, marks_of(page))
-        )
+        target.write_bytes(build_evidence_pdf(page))
         locked = writer.write(page["user"])
         return {**item(page_id), "evidence_file": str(target), "locked_workbooks": locked}
 
@@ -296,18 +327,21 @@ def create_app(
         marks, notes = evidence.default_marks(
             locations, (page["image_width"], page["image_height"]), page["row"], printed, regions
         )
+        usage, usage_notes = usage_marks_for(store, page)
+        marks, notes = marks + usage, notes + usage_notes
         store.update_page(page_id, marks=marks, mark_notes=notes)
         return item(page_id)
 
     @app.get("/api/items/{page_id}/evidence.png")
-    def evidence_png(page_id: int) -> Response:
-        page = page_or_404(page_id)
-        return Response(evidence.png_bytes(page_image(page), marks_of(page)), media_type="image/png")
+    def evidence_png(page_id: int, page: int | None = None) -> Response:
+        bill = page_or_404(page_id)
+        shown = view_page(bill, page)
+        return Response(evidence.png_bytes(page_image(shown), marks_on(bill, shown)), media_type="image/png")
 
     @app.get("/api/items/{page_id}/evidence.pdf")
     def evidence_pdf(page_id: int) -> Response:
         page = page_or_404(page_id)
-        content = evidence.pdf_bytes(Path(page["path"]), page["page_number"], page_image(page), settings.dpi, marks_of(page))
+        content = build_evidence_pdf(page)
         name = Path(evidence_path(settings.output_dir, page)).name
         return Response(content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -332,9 +366,7 @@ def create_app(
                 if page["status"] == "submitted" and saved.is_file():
                     content = saved.read_bytes()
                 else:
-                    content = evidence.pdf_bytes(
-                        Path(page["path"]), page["page_number"], page_image(page), settings.dpi, marks_of(page)
-                    )
+                    content = build_evidence_pdf(page)
                 folder = "submitted" if page["status"] == "submitted" else "draft"
                 archive.writestr(f"{folder}/{saved.name}", content)
         name = f"evidence_{re.sub(r'[^A-Za-z0-9_-]+', '_', user) or 'user'}.zip"

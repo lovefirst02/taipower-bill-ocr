@@ -55,11 +55,34 @@ def png_bytes(size=(1654, 2339)):
     return buffer.getvalue()
 
 
-def three_page_pdf():
+def energy_saving_page():
+    """A bill's back page: the 節電資訊 table with this period's usage."""
+    page = BillResult({
+        "document_type": "high_voltage_bill",
+        "quality": {"warnings": []},
+        "energy_saving_info": {"comparison_rows": [
+            {"period": "current", "days": 31, "energy_kwh": 15000, "daily_average_kwh": 483.87},
+            {"period": "same_period_last_year", "days": 31, "energy_kwh": 20000, "daily_average_kwh": 645.16},
+        ]},
+    })
+    page.ocr_lines = [
+        OcrLine("用電日數", 1062, 112, 105, 32, "energy_saving_info"),
+        OcrLine("度數", 1261, 114, 57, 31, "energy_saving_info"),
+        OcrLine("本期", 860, 147, 59, 34, "energy_saving_info"),
+        OcrLine("31", 1086, 150, 37, 30, "energy_saving_info"),
+        OcrLine("15000", 1254, 150, 78, 29, "energy_saving_info"),
+        OcrLine("483.87", 1438, 150, 85, 29, "energy_saving_info"),
+        OcrLine("去年同期", 862, 186, 105, 29, "energy_saving_info"),
+        OcrLine("20000", 1254, 186, 77, 29, "energy_saving_info"),
+    ]
+    return page
+
+
+def three_page_pdf(pages=3):
     from pypdf import PdfWriter
 
     writer = PdfWriter()
-    for _ in range(3):
+    for _ in range(pages):
         writer.add_blank_page(width=595, height=842)
     buffer = io.BytesIO()
     writer.write(buffer)
@@ -109,7 +132,7 @@ class ApiTests(unittest.TestCase):
         # The highlight covers the label and the amount on the 稅前應繳總金額 row.
         self.assertLessEqual(pretax["x"], 710)
         self.assertGreaterEqual(pretax["x"] + pretax["w"], 1020 + 172)
-        self.assertEqual(detail["mark_notes"], [])
+        self.assertEqual([note for note in detail["mark_notes"] if not note.startswith("Electricity Usage")], [])
 
     def test_residential_bill_marks_the_total_and_says_so(self):
         bill = official_sample_bill()
@@ -228,7 +251,7 @@ class ApiTests(unittest.TestCase):
         period = detail["locations"]["Billing Period 計費期間"]
         self.assertTrue(period["exact"])
         self.assertLess(period["box"][3], 80)  # one line, not the whole block
-        self.assertEqual(detail["mark_notes"], [])
+        self.assertEqual([note for note in detail["mark_notes"] if not note.startswith("Electricity Usage")], [])
 
     def test_block_only_location_gets_a_small_highlight_to_drag(self):
         bill = official_sample_bill()
@@ -409,6 +432,53 @@ class ApiTests(unittest.TestCase):
         # A finished upload stays with its bills.
         self.assertEqual(self.client.delete(f"/api/uploads/{uploads['bad.png']['id']}", params={"user": "Amy"}).status_code, 409)
         self.assertEqual(self.client.post(f"/api/uploads/{uploads['bad.png']['id']}/retry", json={"user": "Amy"}).status_code, 409)
+
+    def upload_two_page_bill(self, user="Amy"):
+        def extract(self_, path, page):
+            return official_sample_bill() if page == 1 else energy_saving_page()
+
+        with mock.patch.object(FakeExtractor, "extract", extract):
+            self.client.post("/api/uploads", data={"user": user}, files=[("files", ("two.pdf", three_page_pdf(2), "application/pdf"))])
+            self.app.state.worker.wait_idle(10)
+        return self.client.get(f"/api/items/{self.first_item(user)['id']}").json()
+
+    def test_current_usage_on_the_back_page_is_marked(self):
+        from pypdf import PdfReader
+
+        detail = self.upload_two_page_bill()
+        self.assertEqual([(page["page"], page["bill"]) for page in detail["pages"]], [(1, True), (2, False)])
+        usage = [mark for mark in detail["marks"] if mark.get("page") == 2]
+        label = next(mark for mark in usage if mark["type"] == "label")
+        highlight = next(mark for mark in usage if mark["type"] == "highlight")
+        self.assertEqual(label["text"], "Electricity Usage (kwh)")
+        # From the 本期 label to the 15000 under 度數, on that row only.
+        self.assertLessEqual(highlight["x"], 860)
+        self.assertGreaterEqual(highlight["x"] + highlight["w"], 1254 + 78)
+        self.assertLess(highlight["h"], 60)
+        self.assertEqual(detail["mark_notes"], [])
+
+        item_id = detail["id"]
+        self.assertEqual(self.client.get(f"/api/items/{item_id}/image", params={"page": 2}).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/items/{item_id}/image", params={"page": 3}).status_code, 404)
+        self.assertEqual(self.client.get(f"/api/items/{item_id}/evidence.png", params={"page": 2}).status_code, 200)
+        self.assertEqual(len(PdfReader(io.BytesIO(self.client.get(f"/api/items/{item_id}/evidence.pdf").content)).pages), 2)
+
+        # Without marks on the back page, the evidence is the bill page alone.
+        bill_marks = [mark for mark in detail["marks"] if "page" not in mark]
+        self.client.put(f"/api/items/{item_id}", json={"user": "Amy", "marks": bill_marks})
+        self.assertEqual(len(PdfReader(io.BytesIO(self.client.get(f"/api/items/{item_id}/evidence.pdf").content)).pages), 1)
+        # Reset puts the usage mark back.
+        reset = self.client.post(f"/api/items/{item_id}/reset-marks").json()
+        self.assertEqual(sum(mark.get("page") == 2 for mark in reset["marks"]), 2)
+
+        saved = Path(self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"}).json()["evidence_file"])
+        self.assertEqual(len(PdfReader(str(saved)).pages), 2)
+
+    def test_bill_without_usage_says_so(self):
+        self.upload("Amy", "jan.png")
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertEqual(len(detail["pages"]), 1)
+        self.assertTrue(any(note.startswith("Electricity Usage (kwh): 本期度數") for note in detail["mark_notes"]))
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

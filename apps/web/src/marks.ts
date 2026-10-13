@@ -1,5 +1,5 @@
 // Geometry for editing evidence marks, in page-image pixels.
-import type { Highlight, Label, Mark } from "./types";
+import type { Highlight, Label, Mark, ViewPage } from "./types";
 
 export const MIN_SIZE = 12;
 // Same fonts as the server: Arial Bold, Microsoft JhengHei Bold for Chinese.
@@ -90,4 +90,9 @@ export function newLabel(page: Bounds, text: string, around?: { x: number; y: nu
   };
 }
 
-export const EVIDENCE_LABELS = ["Billing period", "Grey Electricity Cost"];
+export const EVIDENCE_LABELS = ["Billing period", "Grey Electricity Cost", "Electricity Usage (kwh)"];
+
+/** Whether a mark sits on the given page of the review (the bill page has none set). */
+export function isOnPage(mark: Mark, page: ViewPage): boolean {
+  return page.bill ? mark.page === undefined || mark.page === page.page : mark.page === page.page;
+}

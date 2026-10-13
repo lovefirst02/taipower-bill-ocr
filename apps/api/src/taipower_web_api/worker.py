@@ -27,11 +27,25 @@ from taipower_bill_ocr.batch import (
 )
 from taipower_bill_ocr.dataset import page_record
 
-from .evidence import default_marks
+from .evidence import USAGE_LABEL, default_marks, is_usage_mark, usage_marks
 from .settings import Settings
 from .store import Store
 
 log = logging.getLogger("taipower_web_api.worker")
+
+
+def usage_marks_for(store: Store, page: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Marks for 本期 usage: on the bill page itself, else on its back pages."""
+    for candidate in [page, *store.companion_pages(page)]:
+        own = candidate["id"] == page["id"]
+        marks, notes = usage_marks(
+            candidate["dataset"],
+            (candidate["image_width"], candidate["image_height"]),
+            None if own else candidate["page_number"],
+        )
+        if marks:
+            return marks, notes
+    return [], [f"{USAGE_LABEL}: 本期度數 (節電資訊) not found on this bill or its back page, add the mark by hand"]
 
 
 class OcrWorker:
@@ -170,12 +184,24 @@ class OcrWorker:
         if self._cancel.is_set():
             self.store.set_upload(upload_id, status="paused")
             return
+        self._add_usage_marks(upload_id)
         self.store.set_upload(
             upload_id,
             status="failed" if errors else "done",
             error="; ".join(errors) or None,
             processed_at=datetime.now().isoformat(timespec="seconds"),
         )
+
+    def _add_usage_marks(self, upload_id: int) -> None:
+        """Once every page is read, mark 本期 usage, which is often on the back page."""
+        for page in self.store.pages(bills_only=True):
+            if page["upload_id"] != upload_id or page["status"] != "draft":
+                continue
+            marks, notes = page["marks"] or [], page["mark_notes"] or []
+            if any(is_usage_mark(mark) for mark in marks) or any(USAGE_LABEL in note for note in notes):
+                continue  # already done before a pause or restart
+            usage, usage_notes = usage_marks_for(self.store, page)
+            self.store.update_page(page["id"], marks=marks + usage, mark_notes=notes + usage_notes)
 
     def _store_page(self, upload_id: int, filename: str, path: Path, event: PageDone) -> None:
         dataset = page_record(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labelSize, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
+import { isOnPage, labelSize, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
 import type { Highlight, Label } from "./types";
 
 const page = { width: 1654, height: 2339 };
@@ -53,5 +53,21 @@ describe("labels and new marks", () => {
 
   it("measures Chinese labels wider than Latin ones", () => {
     expect(labelSize({ text: "灰電", fontSize: 40 }).w).toBeGreaterThan(labelSize({ text: "ab", fontSize: 40 }).w);
+  });
+});
+
+describe("isOnPage", () => {
+  const bill = { page: 1, width: 100, height: 100, bill: true };
+  const back = { page: 2, width: 100, height: 100, bill: false };
+  const mark = { id: "a", type: "highlight" as const, x: 0, y: 0, w: 10, h: 10 };
+
+  it("puts marks without a page on the bill page", () => {
+    expect(isOnPage(mark, bill)).toBe(true);
+    expect(isOnPage(mark, back)).toBe(false);
+  });
+
+  it("puts marks with a page on that page", () => {
+    expect(isOnPage({ ...mark, page: 2 }, back)).toBe(true);
+    expect(isOnPage({ ...mark, page: 2 }, bill)).toBe(false);
   });
 });

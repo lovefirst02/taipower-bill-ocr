@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { newHighlight, newLabel } from "../marks";
+import { isOnPage, newHighlight, newLabel } from "../marks";
 import type { Column, Item, Mark, Row } from "../types";
 import { FieldForm } from "./FieldForm";
 import { MarksPanel } from "./MarksPanel";
@@ -40,6 +40,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
 
   const load = useCallback((loaded: Item) => {
     setItem(loaded);
@@ -50,6 +51,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
 
   useEffect(() => {
     setItem(null);
+    setPageIndex(0);
     setSelectedId(null);
     setFocused(null);
     setMessage(null);
@@ -137,8 +139,15 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
 
   if (!item) return <div className="review empty">{message ? message.text : "Loading…"}</div>;
 
-  const page = { width: item.image.width, height: item.image.height };
-  const focusBox = focused ? item.locations[focused]?.box ?? null : null;
+  const pages = item.pages?.length ? item.pages : [{ page: item.page, width: item.image.width, height: item.image.height, bill: true }];
+  const shown = pages[Math.min(pageIndex, pages.length - 1)];
+  const page = { width: shown.width, height: shown.height };
+  const pageMarks = marks.filter((mark) => isOnPage(mark, shown));
+  // Edits from the viewer and panel cover this page only; marks elsewhere stay.
+  const changePageMarks = (next: Mark[]) => changeMarks([...marks.filter((mark) => !isOnPage(mark, shown)), ...next]);
+  const onShown = <T extends Mark>(mark: T): T => (shown.bill ? mark : { ...mark, page: shown.page ?? undefined });
+  // Field positions are on the bill page.
+  const focusBox = focused && shown.bill ? item.locations[focused]?.box ?? null : null;
   const pageLabel = item.page ? ` · page ${item.page}` : "";
 
   return (
@@ -171,27 +180,49 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
         </ul>
       )}
       <div className="review-body">
-        <PageViewer
-          imageUrl={api.imageUrl(itemId)}
-          width={page.width}
-          height={page.height}
-          marks={marks}
-          selectedId={selectedId}
-          editable={editable}
-          focusBox={focusBox}
-          onSelect={setSelectedId}
-          onChange={changeMarks}
-        />
+        <div className="viewer-column">
+          {pages.length > 1 && (
+            <div className="page-tabs" role="tablist">
+              {pages.map((view, index) => {
+                const count = marks.filter((mark) => isOnPage(mark, view) && mark.type === "label").length;
+                return (
+                  <button
+                    key={view.page ?? "bill"}
+                    role="tab"
+                    aria-selected={index === pageIndex}
+                    className={index === pageIndex ? "active" : ""}
+                    onClick={() => { setPageIndex(index); setSelectedId(null); }}
+                  >
+                    {view.page ? `Page ${view.page}` : "Page"}{view.bill ? " · bill" : ""}
+                    {count > 0 && <span>{count} {count === 1 ? "label" : "labels"}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <PageViewer
+            key={shown.page ?? "bill"}
+            imageUrl={api.imageUrl(itemId, shown.bill ? null : shown.page)}
+            width={page.width}
+            height={page.height}
+            marks={pageMarks}
+            selectedId={selectedId}
+            editable={editable}
+            focusBox={focusBox}
+            onSelect={setSelectedId}
+            onChange={changePageMarks}
+          />
+        </div>
         <aside className="side">
           <MarksPanel
-            marks={marks}
+            marks={pageMarks}
             notes={item.mark_notes}
             selectedId={selectedId}
             editable={editable}
             onSelect={setSelectedId}
-            onChange={changeMarks}
-            onAddHighlight={() => { const mark = newHighlight(page); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
-            onAddLabel={(text) => { const mark = newLabel(page, text); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
+            onChange={changePageMarks}
+            onAddHighlight={() => { const mark = onShown(newHighlight(page)); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
+            onAddLabel={(text) => { const mark = onShown(newLabel(page, text)); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
             onReset={reset}
           />
           <FieldForm
@@ -211,10 +242,10 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
         <div className="modal" onClick={() => setPreview(null)}>
           <div className="modal-body" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3>Evidence preview — exactly what the PDF/PNG will show</h3>
+              <h3>Evidence preview{pages.length > 1 ? ` (${shown.page ? `page ${shown.page}` : "bill page"})` : ""} — exactly what the PDF/PNG will show</h3>
               <button onClick={() => setPreview(null)}>Close</button>
             </div>
-            <img src={api.evidencePngUrl(itemId, preview)} alt="Evidence preview" />
+            <img src={api.evidencePngUrl(itemId, preview, shown.bill ? null : shown.page)} alt="Evidence preview" />
           </div>
         </div>
       )}

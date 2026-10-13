@@ -3,6 +3,9 @@
 Marks are stored in the page image's pixel coordinates (the image OCR read,
 rendered at the OCR DPI). They are drawn onto that image for PNG output and,
 for PDF uploads, overlaid on the original PDF page so its text stays vector.
+
+A mark with ``page`` sits on another page of the same PDF (the bill's back
+page, which holds 節電資訊 and its 本期 usage); without it, on the bill page.
 """
 
 from __future__ import annotations
@@ -39,6 +42,11 @@ EVIDENCE_TARGETS = (
         "columns": ["稅前應繳總金額", "應繳總金額"],
     },
 )
+
+
+# 節電資訊 → 本期 → 度數: the current period's usage, usually on the back page.
+USAGE_LABEL = "Electricity Usage (kwh)"
+USAGE_GROUP = "usage"
 
 
 def label_font_path(text: str = "") -> Path | None:
@@ -110,21 +118,114 @@ def default_marks(
             y += min(80.0, h * 0.06)  # below the block's title bar, where it is visible
             h = max(24.0, height * 0.02)
             w = min(w, width * 0.35)
-        group = _new_id()
-        marks.append(
-            {"id": _new_id(), "type": "highlight", "group": group, "x": x, "y": y, "w": w, "h": h}
-        )
-        font_size = max(28.0, min(h * 1.1, 60.0))
-        text_w, text_h = label_size(target["label"], font_size)
-        label_x, label_y = _label_position((x, y, w, h), (text_w, text_h), (width, height), taken, regions or [])
-        taken += [(x, y, w, h), (label_x, label_y, text_w, text_h)]
-        marks.append(
-            {
-                "id": _new_id(), "type": "label", "group": group, "text": target["label"],
-                "x": label_x, "y": label_y, "fontSize": font_size,
-            }
-        )
+        marks += _highlight_and_label(target["label"], (x, y, w, h), image_size, taken, regions or [])
     return marks, notes
+
+
+def _highlight_and_label(
+    text: str,
+    box: tuple[float, float, float, float],
+    image_size: tuple[int, int],
+    taken: list[tuple[float, ...]],
+    regions: Sequence[tuple[float, ...]],
+    group: str | None = None,
+) -> list[dict[str, Any]]:
+    """A highlight over ``box`` and its red label where it hides least text.
+
+    ``taken`` (printed text and earlier marks) is extended with both.
+    """
+    x, y, w, h = box
+    group = group or _new_id()
+    font_size = max(28.0, min(h * 1.1, 60.0))
+    text_w, text_h = label_size(text, font_size)
+    label_x, label_y = _label_position((x, y, w, h), (text_w, text_h), image_size, taken, regions)
+    taken += [(x, y, w, h), (label_x, label_y, text_w, text_h)]
+    return [
+        {"id": _new_id(), "type": "highlight", "group": group, "x": x, "y": y, "w": w, "h": h},
+        {"id": _new_id(), "type": "label", "group": group, "text": text, "x": label_x, "y": label_y, "fontSize": font_size},
+    ]
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _number(text: str) -> float | None:
+    try:
+        return float(re.sub(r"[,，\s度]", "", text))
+    except ValueError:
+        return None
+
+
+def current_usage_kwh(dataset: Mapping[str, Any]) -> Any:
+    """The 本期 row's 度數 from the 節電資訊 comparison table, if it was read."""
+    cells = [cell for cell in dataset.get("table_rows") or [] if cell["table"] == "comparison_rows"]
+    current = {cell["row"] for cell in cells if cell["column"] == "period" and cell["value"] == "current"}
+    return next((cell["value"] for cell in cells if cell["row"] in current and cell["column"] == "energy_kwh"), None)
+
+
+def find_usage(dataset: Mapping[str, Any]) -> tuple[tuple[float, float, float, float], bool] | None:
+    """Where 本期 usage is printed: from the 本期 label to its 度數 value.
+
+    Returns the box and whether the value itself was found (otherwise only
+    the 本期 label is boxed), or None when the page has no 本期 row.
+    """
+    lines = dataset.get("ocr_lines") or []
+    energy = [line for line in lines if line.get("block") == "energy_saving_info"] or lines
+    kwh = _number(str(current_usage_kwh(dataset))) if current_usage_kwh(dataset) is not None else None
+    header = next((line for line in energy if _compact(line["text"]) == "度數"), None)
+    for label in (line for line in energy if _compact(line["text"]) in {"本期", "本期度數"}):
+        middle = label["y"] + label["height"] / 2
+        row = [
+            line for line in energy
+            if line is not label and line["x"] > label["x"]
+            and abs(line["y"] + line["height"] / 2 - middle) < label["height"] * 0.6
+        ]
+        value = None
+        if kwh is not None:
+            value = next((line for line in row if _number(line["text"]) == kwh), None)
+        if value is None and header is not None and row:
+            # Not read into the table: take the number under the 度數 heading.
+            centre = header["x"] + header["width"] / 2
+            value = min(row, key=lambda line: abs(line["x"] + line["width"] / 2 - centre))
+            if abs(value["x"] + value["width"] / 2 - centre) > header["width"] * 2 or _number(value["text"]) is None:
+                value = None
+        if value is None:
+            return (label["x"], label["y"], label["width"], label["height"]), False
+        left, top = min(label["x"], value["x"]), min(label["y"], value["y"])
+        right = max(label["x"] + label["width"], value["x"] + value["width"])
+        bottom = max(label["y"] + label["height"], value["y"] + value["height"])
+        pad = 4.0
+        return (left - pad, top - pad, right - left + 2 * pad, bottom - top + 2 * pad), True
+    return None
+
+
+def usage_marks(
+    dataset: Mapping[str, Any],
+    image_size: tuple[int, int],
+    page: int | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Highlight and label 本期 usage on one page; ``page`` is set on marks for another page."""
+    found = find_usage(dataset)
+    if found is None:
+        return [], []
+    box, exact = found
+    printed = [(line["x"], line["y"], line["width"], line["height"]) for line in dataset.get("ocr_lines") or []]
+    regions = [
+        (bounds["x"], bounds["y"], bounds["width"], bounds["height"])
+        for bounds in (dataset.get("blocks") or {}).values()
+    ]
+    marks = _highlight_and_label(USAGE_LABEL, box, image_size, printed, regions, group=f"{USAGE_GROUP}-{_new_id()}")
+    if page is not None:
+        for mark in marks:
+            mark["page"] = page
+    where = f" (page {page})" if page is not None else ""
+    notes = [] if exact else [f"{USAGE_LABEL}: 本期 found{where} but not its 度數, check the highlight"]
+    return marks, notes
+
+
+def is_usage_mark(mark: Mapping[str, Any]) -> bool:
+    return str(mark.get("group") or "").startswith(USAGE_GROUP)
 
 
 def _overlap(a: tuple[float, ...], b: tuple[float, ...]) -> float:
@@ -266,18 +367,27 @@ def pdf_bytes(
     dpi: int,
     marks: list[Mapping[str, Any]],
 ) -> bytes:
-    """A one-page evidence PDF.
+    """A one-page evidence PDF (see ``evidence_pdf``)."""
+    return evidence_pdf(source, [(page_number, image, marks)], dpi)
 
-    PDF uploads keep their original (vector) page with the marks overlaid;
+
+def evidence_pdf(
+    source: Path,
+    pages: Sequence[tuple[int | None, Image.Image, list[Mapping[str, Any]]]],
+    dpi: int,
+) -> bytes:
+    """An evidence PDF of ``(page number, page image, marks)``, in order.
+
+    PDF uploads keep their original (vector) pages with the marks overlaid;
     images, and PDF pages that are rotated, embed the marked image instead.
     """
     from pypdf import PdfReader, PdfWriter
 
     writer = PdfWriter()
-    if source.suffix.lower() == ".pdf":
-        reader = PdfReader(str(source))
-        page = reader.pages[(page_number or 1) - 1]
-        if not (page.get("/Rotate") or 0) % 360:
+    reader = PdfReader(str(source)) if source.suffix.lower() == ".pdf" else None
+    for page_number, image, marks in pages:
+        page = reader.pages[(page_number or 1) - 1] if reader is not None else None
+        if page is not None and not (page.get("/Rotate") or 0) % 360:
             box = page.mediabox
             overlay = PdfReader(
                 io.BytesIO(
@@ -289,10 +399,15 @@ def pdf_bytes(
             ).pages[0]
             page.merge_page(overlay)
             writer.add_page(page)
-            buffer = io.BytesIO()
-            writer.write(buffer)
-            return buffer.getvalue()
+        else:
+            writer.add_page(PdfReader(io.BytesIO(_image_page_pdf(image, dpi, marks))).pages[0])
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
+
+def _image_page_pdf(image: Image.Image, dpi: int, marks: list[Mapping[str, Any]]) -> bytes:
+    """One PDF page holding the marked page image."""
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 

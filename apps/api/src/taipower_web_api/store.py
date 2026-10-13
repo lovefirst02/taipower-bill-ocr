@@ -175,6 +175,24 @@ class Store:
         for row in rows:
             yield _decode(row)
 
+    def companion_pages(self, page: dict[str, Any]) -> list[dict[str, Any]]:
+        """The pages after a bill page in its PDF, up to the next bill (its back pages)."""
+        if page["page_number"] is None:
+            return []
+        rows = self._query(
+            "SELECT pages.*, uploads.user, uploads.filename, uploads.path FROM pages "
+            "JOIN uploads ON uploads.id = pages.upload_id "
+            "WHERE pages.upload_id = ? AND pages.page_number > ? ORDER BY pages.page_number",
+            (page["upload_id"], page["page_number"]),
+        )
+        companions = []
+        for row in rows:
+            other = _decode(row)
+            if other["is_bill"]:
+                break
+            companions.append(other)
+        return companions
+
     def update_page(self, page_id: int, **values: Any) -> None:
         record = _encode({**values, "updated_at": now()})
         assignments = ", ".join(f"{key} = :{key}" for key in record)

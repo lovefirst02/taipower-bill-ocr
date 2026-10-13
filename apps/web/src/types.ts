@@ -15,6 +15,8 @@ export interface Highlight {
   w: number;
   h: number;
   group?: string;
+  /** Another page of the PDF (the bill's back page); absent for the bill page. */
+  page?: number;
 }
 
 export interface Label {
@@ -25,6 +27,7 @@ export interface Label {
   text: string;
   fontSize: number;
   group?: string;
+  page?: number;
 }
 
 export type Mark = Highlight | Label;
@@ -78,11 +81,20 @@ export interface Item {
   marks: Mark[];
   mark_notes: string[];
   image: { width: number; height: number; dpi: number };
+  /** The bill page first, then its back pages, which can hold marks too. */
+  pages: ViewPage[];
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];
   archived_evidence?: string | null;
   evidence_file?: string;
+}
+
+export interface ViewPage {
+  page: number | null;
+  width: number;
+  height: number;
+  bill: boolean;
 }
 
 export interface OutputInfo {

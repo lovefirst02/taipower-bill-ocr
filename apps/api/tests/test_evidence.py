@@ -4,7 +4,7 @@ import unittest
 from PIL import Image
 
 from taipower_bill_ocr.field_locator import FieldLocation
-from taipower_web_api.evidence import _overlap, default_marks, draw_png, label_size, pdf_bytes
+from taipower_web_api.evidence import _overlap, default_marks, draw_png, find_usage, label_size, pdf_bytes
 
 PAGE = (1654, 2339)
 CHARGE_BLOCK = (693, 634, 518, 1188)
@@ -87,6 +87,36 @@ class RenderingTests(unittest.TestCase):
         content = pdf_bytes(__import__("pathlib").Path("bill.png"), None, image, 200, [])
         page = PdfReader(io.BytesIO(content)).pages[0]
         self.assertAlmostEqual(float(page.mediabox.width), 1654 * 72 / 200, places=1)
+
+
+def line(text, x, y, w=60, h=30):
+    return {"text": text, "x": x, "y": y, "width": w, "height": h, "block": "energy_saving_info"}
+
+
+class UsageTests(unittest.TestCase):
+    LINES = [line("度數", 1261, 114), line("本期", 860, 147), line("31", 1086, 150), line("15,000", 1254, 150), line("去年同期", 862, 186), line("20000", 1254, 186)]
+
+    def test_value_read_into_the_table_is_matched_on_the_row(self):
+        table = [
+            {"table": "comparison_rows", "row": 1, "column": "period", "value": "current"},
+            {"table": "comparison_rows", "row": 1, "column": "energy_kwh", "value": 15000},
+        ]
+        box, exact = find_usage({"ocr_lines": self.LINES, "table_rows": table})
+        self.assertTrue(exact)
+        self.assertLessEqual(box[0], 860)
+        self.assertGreaterEqual(box[0] + box[2], 1254 + 60)
+        self.assertLess(box[3], 50)  # 去年同期 below is not included
+
+    def test_value_under_the_heading_is_used_when_the_table_was_not_read(self):
+        box, exact = find_usage({"ocr_lines": self.LINES, "table_rows": []})
+        self.assertTrue(exact)
+        self.assertGreaterEqual(box[0] + box[2], 1254 + 60)
+
+    def test_label_alone_when_no_value_is_beside_it(self):
+        box, exact = find_usage({"ocr_lines": [line("本期", 860, 147)], "table_rows": []})
+        self.assertFalse(exact)
+        self.assertEqual(box, (860, 147, 60, 30))
+        self.assertIsNone(find_usage({"ocr_lines": [line("本期碳排量", 860, 147)], "table_rows": []}))
 
 
 if __name__ == "__main__":
