@@ -48,4 +48,5 @@ export const api = {
   evidencePngUrl: (id: number, version: number) => `/api/items/${id}/evidence.png?v=${version}`,
   evidencePdfUrl: (id: number) => `/api/items/${id}/evidence.pdf`,
   exportUrl: (user: string) => `/api/export.xlsx?user=${encodeURIComponent(user)}`,
+  evidenceZipUrl: (user: string) => `/api/evidence.zip?user=${encodeURIComponent(user)}`,
 };

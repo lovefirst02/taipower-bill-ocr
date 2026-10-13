@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
+import { labelSize, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
 import type { Highlight, Label } from "./types";
 
 const page = { width: 1654, height: 2339 };
@@ -48,6 +48,10 @@ describe("labels and new marks", () => {
     expect(created.x).toBe(0);
     expect(created.y).toBe(0);
     const text = newLabel(page, "Billing period", { x: page.width, y: page.height });
-    expect(text.x + text.text.length * text.fontSize * 0.5).toBeLessThanOrEqual(page.width);
+    expect(text.x + labelSize(text).w).toBeLessThanOrEqual(page.width);
+  });
+
+  it("measures Chinese labels wider than Latin ones", () => {
+    expect(labelSize({ text: "灰電", fontSize: 40 }).w).toBeGreaterThan(labelSize({ text: "ab", fontSize: 40 }).w);
   });
 });

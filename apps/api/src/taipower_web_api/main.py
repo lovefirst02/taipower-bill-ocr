@@ -6,6 +6,7 @@ import hashlib
 import io
 import re
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -266,6 +267,38 @@ def create_app(
         return Response(content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     # ---------------------------------------------------------------- export
+    @app.get("/api/evidence.zip")
+    def evidence_zip(user: str, status: str = "all") -> Response:
+        """Every evidence PDF of a user's bills in one ZIP.
+
+        Submitted bills use the PDF written at submission (exactly what was
+        sent); drafts are rendered from their current marks.
+        """
+        if status not in {"all", "submitted"}:
+            raise HTTPException(400, "status must be 'all' or 'submitted'")
+        user = _clean_user(user)
+        pages = list(store.pages(user=user, bills_only=True, submitted_only=status == "submitted"))
+        if not pages:
+            raise HTTPException(404, "no bills to download")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for page in pages:
+                saved = evidence_path(settings.output_dir, page)
+                if page["status"] == "submitted" and saved.is_file():
+                    content = saved.read_bytes()
+                else:
+                    content = evidence.pdf_bytes(
+                        Path(page["path"]), page["page_number"], page_image(page), settings.dpi, marks_of(page)
+                    )
+                folder = "submitted" if page["status"] == "submitted" else "draft"
+                archive.writestr(f"{folder}/{saved.name}", content)
+        name = f"evidence_{re.sub(r'[^A-Za-z0-9_-]+', '_', user) or 'user'}.zip"
+        return Response(
+            buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
     @app.get("/api/export.xlsx")
     def export(user: str) -> Response:
         pages = list(store.pages(user=_clean_user(user), bills_only=True))
@@ -277,7 +310,7 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"ok": True, "pen_font": str(evidence.pen_font_path()), "output_dir": str(settings.output_dir)}
+        return {"ok": True, "label_font": str(evidence.label_font_path()), "output_dir": str(settings.output_dir)}
 
     # The built web app is served from the same origin in production.
     if settings.web_dist.is_dir():

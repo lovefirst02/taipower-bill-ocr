@@ -2,7 +2,8 @@
 import type { Highlight, Label, Mark } from "./types";
 
 export const MIN_SIZE = 12;
-export const PEN_FONT = "'Ink Free', 'Segoe Print', 'Comic Sans MS', cursive";
+// Same fonts as the server: Arial Bold, Microsoft JhengHei Bold for Chinese.
+export const LABEL_FONT = "Arial, 'Microsoft JhengHei', sans-serif";
 
 export type Handle = "nw" | "ne" | "sw" | "se";
 
@@ -14,9 +15,11 @@ export interface Bounds {
 const clamp = (value: number, low: number, high: number) =>
   Math.min(Math.max(value, low), Math.max(low, high));
 
-/** Approximate size of a red-pen label (the server measures the real font). */
+/** Approximate size of a red label (the server measures the real font). */
 export function labelSize(label: Pick<Label, "text" | "fontSize">): { w: number; h: number } {
-  return { w: label.text.length * label.fontSize * 0.5, h: label.fontSize * 1.1 };
+  // Bold Latin glyphs are about 0.6 em wide; Chinese characters a full em.
+  const ems = [...label.text].reduce((sum, char) => sum + (/[㐀-鿿]/.test(char) ? 1 : 0.6), 0);
+  return { w: ems * label.fontSize, h: label.fontSize * 1.1 };
 }
 
 export function markBox(mark: Mark): { x: number; y: number; w: number; h: number } {

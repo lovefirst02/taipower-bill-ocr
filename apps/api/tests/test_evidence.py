@@ -65,7 +65,20 @@ class RenderingTests(unittest.TestCase):
         red, green, blue = result.getpixel((200, 120))
         self.assertTrue(red > 240 and green > 230 and blue < 200)  # translucent yellow
         reds = [pixel for pixel in result.crop((350, 100, 650, 150)).getdata() if pixel[0] > 150 and pixel[1] < 90]
-        self.assertGreater(len(reds), 50)  # red pen strokes
+        self.assertGreater(len(reds), 50)  # red bold text
+
+    def test_labels_use_a_plain_bold_font_with_cjk_fallback(self):
+        from taipower_web_api.evidence import label_font_path
+
+        latin, chinese = label_font_path("Grey Electricity Cost"), label_font_path("灰電費用")
+        if latin is None:
+            self.skipTest("Windows fonts not available")
+        self.assertEqual(latin.name.lower(), "arialbd.ttf")
+        self.assertEqual(chinese.name.lower(), "msjhbd.ttc")
+        image = Image.new("RGB", (600, 200), "white")
+        marked = draw_png(image, [{"id": "c", "type": "label", "x": 20, "y": 40, "text": "灰電費用", "fontSize": 60}])
+        reds = [pixel for pixel in marked.getdata() if pixel[0] > 150 and pixel[1] < 90]
+        self.assertGreater(len(reds), 300)  # real glyphs, not empty boxes
 
     def test_image_upload_gets_a_pdf_with_the_marked_page(self):
         from pypdf import PdfReader

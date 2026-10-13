@@ -1,4 +1,4 @@
-"""Evidence marks: highlight values on the bill and label them in red pen.
+"""Evidence marks: highlight values on the bill and label them in red.
 
 Marks are stored in the page image's pixel coordinates (the image OCR read,
 rendered at the OCR DPI). They are drawn onto that image for PNG output and,
@@ -8,6 +8,7 @@ for PDF uploads, overlaid on the original PDF page so its text stays vector.
 from __future__ import annotations
 
 import io
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -18,14 +19,12 @@ from taipower_bill_ocr.field_locator import FieldLocation
 
 HIGHLIGHT_RGB = (255, 235, 59)  # highlighter yellow
 HIGHLIGHT_ALPHA = 0.40
-PEN_RGB = (211, 47, 47)  # red pen
+LABEL_RGB = (211, 47, 47)  # red
 
-# Handwriting-style fonts that ship with Windows, in order of preference.
-_PEN_FONTS = [
-    Path("C:/Windows/Fonts/Inkfree.ttf"),
-    Path("C:/Windows/Fonts/segoepr.ttf"),
-    Path("C:/Windows/Fonts/segoeprb.ttf"),
-]
+# Plain bold fonts that ship with Windows: Arial for Latin text, and
+# Microsoft JhengHei when a label has Chinese characters (Arial has none).
+_LATIN_FONTS = [Path("C:/Windows/Fonts/arialbd.ttf"), Path("C:/Windows/Fonts/segoeuib.ttf")]
+_CJK_FONTS = [Path("C:/Windows/Fonts/msjhbd.ttc")]
 
 # What to mark, the English label written beside it, and fallbacks.
 EVIDENCE_TARGETS = (
@@ -42,20 +41,22 @@ EVIDENCE_TARGETS = (
 )
 
 
-def pen_font_path() -> Path | None:
-    return next((path for path in _PEN_FONTS if path.exists()), None)
+def label_font_path(text: str = "") -> Path | None:
+    """The bold font used for ``text``; CJK text needs a font with CJK glyphs."""
+    preferred = _CJK_FONTS + _LATIN_FONTS if re.search(r"[㐀-鿿]", text) else _LATIN_FONTS + _CJK_FONTS
+    return next((path for path in preferred if path.exists()), None)
 
 
-def _pil_font(size: int) -> ImageFont.ImageFont:
-    path = pen_font_path()
+def _pil_font(size: int, text: str = "") -> ImageFont.ImageFont:
+    path = label_font_path(text)
     if path is not None:
-        return ImageFont.truetype(str(path), size)
+        return ImageFont.truetype(str(path), size, index=0)
     return ImageFont.load_default(size=size)
 
 
 def label_size(text: str, font_size: float) -> tuple[float, float]:
-    """Width and height a red-pen label takes, in image pixels."""
-    font = _pil_font(max(1, round(font_size)))
+    """Width and height a red label takes, in image pixels."""
+    font = _pil_font(max(1, round(font_size)), text)
     left, top, right, bottom = font.getbbox(text)
     return right - left, bottom - top
 
@@ -184,7 +185,7 @@ def _label_position(
 
 
 def draw_png(image: Image.Image, marks: list[Mapping[str, Any]]) -> Image.Image:
-    """The page image with highlights and red-pen labels drawn on it."""
+    """The page image with highlights and red labels drawn on it."""
     base = image.convert("RGBA")
     layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
@@ -199,9 +200,9 @@ def draw_png(image: Image.Image, marks: list[Mapping[str, Any]]) -> Image.Image:
     draw = ImageDraw.Draw(combined)
     for mark in marks:
         if mark["type"] == "label":
-            font = _pil_font(max(1, round(mark["fontSize"])))
+            font = _pil_font(max(1, round(mark["fontSize"])), mark["text"])
             left, top, _, _ = font.getbbox(mark["text"])
-            draw.text((mark["x"] - left, mark["y"] - top), mark["text"], font=font, fill=PEN_RGB)
+            draw.text((mark["x"] - left, mark["y"] - top), mark["text"], font=font, fill=LABEL_RGB)
     return combined.convert("RGB")
 
 
@@ -211,16 +212,17 @@ def png_bytes(image: Image.Image, marks: list[Mapping[str, Any]]) -> bytes:
     return buffer.getvalue()
 
 
-def _register_pen_font() -> str:
+def _register_font(text: str) -> str:
+    """The reportlab font name for ``text``, registering the TTF on first use."""
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
-    path = pen_font_path()
+    path = label_font_path(text)
     if path is None:
         return "Helvetica-Bold"
-    name = "EvidencePen"
+    name = f"EvidenceLabel-{path.stem}"
     if name not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(name, str(path)))
+        pdfmetrics.registerFont(TTFont(name, str(path), subfontIndex=0))
     return name
 
 
@@ -242,14 +244,13 @@ def _overlay_pdf(page_width: float, page_height: float, scale: float, marks: lis
                 stroke=0,
                 fill=1,
             )
-    font = _register_pen_font()
-    pdf.setFillColorRGB(*(channel / 255 for channel in PEN_RGB), alpha=1)
+    pdf.setFillColorRGB(*(channel / 255 for channel in LABEL_RGB), alpha=1)
     for mark in marks:
         if mark["type"] == "label":
             size = mark["fontSize"] * scale
-            pil_font = _pil_font(max(1, round(mark["fontSize"])))
+            pil_font = _pil_font(max(1, round(mark["fontSize"])), mark["text"])
             _, top, _, bottom_px = pil_font.getbbox(mark["text"])
-            pdf.setFont(font, size)
+            pdf.setFont(_register_font(mark["text"]), size)
             # Place the text baseline so its glyph box matches the PNG output.
             baseline_px = mark["y"] + (bottom_px - top) * 0.8
             pdf.drawString(left + mark["x"] * scale, bottom + page_height - baseline_px * scale, mark["text"])
@@ -297,9 +298,14 @@ def pdf_bytes(
 
     marked = draw_png(image, marks)
     width, height = marked.width * 72 / dpi, marked.height * 72 / dpi
+    # Embed as JPEG: a scanned or photographed page is several times smaller
+    # than lossless, with no visible difference at this quality.
+    jpeg = io.BytesIO()
+    marked.save(jpeg, format="JPEG", quality=90, optimize=True)
+    jpeg.seek(0)
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(width, height))
-    pdf.drawImage(ImageReader(marked), 0, 0, width, height)
+    pdf.drawImage(ImageReader(jpeg), 0, 0, width, height)
     pdf.showPage()
     pdf.save()
     return buffer.getvalue()

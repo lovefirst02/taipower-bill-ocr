@@ -119,6 +119,19 @@ export default function App() {
       <header className="topbar">
         <h1>Taipower Bill OCR</h1>
         <div className="topbar-actions">
+          <a
+            className="button"
+            href={api.evidenceZipUrl(user)}
+            title="Every evidence PDF in one ZIP: submitted/ holds what was sent, draft/ the current marks"
+            onClick={(event) => {
+              if (!items.length) {
+                event.preventDefault();
+                setNotice("No bills to download yet.");
+              }
+            }}
+          >
+            Download all PDFs
+          </a>
           <a className="button" href={api.exportUrl(user)}>Export my Excel</a>
           <button className="user" onClick={() => setEditingUser(true)} title="Change name">{user}</button>
         </div>

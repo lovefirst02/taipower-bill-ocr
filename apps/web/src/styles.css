@@ -129,7 +129,7 @@ main { flex: 1; min-width: 0; display: flex; }
 .marks-panel li.selected { background: #e3edf9; }
 .swatch { width: 22px; height: 16px; border-radius: 3px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
 .highlight-swatch { background: rgba(255, 235, 59, 0.85); }
-.pen-swatch { color: var(--pen); font-family: "Ink Free", "Segoe Print", cursive; font-weight: bold; }
+.pen-swatch { color: var(--pen); font-family: Arial, "Microsoft JhengHei", sans-serif; font-weight: bold; }
 .label-text { flex: 1; color: var(--pen); }
 .label-size { width: 58px; }
 .mark-desc { flex: 1; color: var(--muted); font-size: 13px; }

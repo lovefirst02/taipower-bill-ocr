@@ -505,7 +505,7 @@ npm test           # 前端與後端測試
 3. 點選帳單：左側為原圖，右側為 17 欄欄位。需檢查的欄位為黃色，點選欄位時原圖會捲動並框出位置；
    兩個 OCR 引擎讀法不同時可一鍵改用另一個讀法。修改金額時其他調整費用即時重算。
 4. 證據標記：自動在「計費期間」與「稅前應繳總金額」（住宅帳單沒有這一列時改標「應繳總金額」並提示）
-   畫上黃色螢光，並在空白處以紅色手寫字標註 **Billing period** 與 **Grey Electricity Cost**。
+   畫上黃色螢光，並在空白處以紅色粗體字標註 **Billing period** 與 **Grey Electricity Cost**。
    標記可拖曳、拉角縮放、修改文字與字級、新增或刪除；「Reset」只還原標記，不影響未存的欄位。
    「Preview evidence」顯示伺服器實際輸出的圖，與下載的 PDF／PNG 相同。
 5. 「Submit」送出：寫入證據 PDF（PDF 上傳時保留原始向量內容並疊上標記），並重建兩個共用 Excel：
@@ -513,7 +513,8 @@ npm test           # 前端與後端測試
    - `taipower_bills.xlsx`：完整總表（Pages／Fields／TableRows／Files），人工修正的值標為
      `reviewer_corrected`，原 OCR 讀值保留在 `cross_check_value`。
    Excel 被開啟時會提示，下一次送出時再寫入。送出後如需修改可按「Reopen」。
-6. 「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
+6. 「Download all PDFs」把自己所有帳單的證據 PDF 打包成一個 ZIP：`submitted/` 是送出時存下的版本，
+   `draft/` 依目前的標記產生。「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
 
 設定（環境變數）：
 
@@ -524,5 +525,5 @@ npm test           # 前端與後端測試
 | `TAIPOWER_OCR_BACKEND` | `crosscheck` | 或 `paddleocr`、`windows` |
 | `TAIPOWER_DPI` | `200` | PDF 轉圖解析度 |
 
-紅色手寫字使用 Windows 內建的 Ink Free 字型（沒有時改用 Segoe Print）。後端需在 Windows 上執行
+紅色粗體字使用 Windows 內建的 Arial Bold，標籤含中文時改用微軟正黑體粗體。圖片上傳的證據 PDF 以高品質 JPEG 內嵌（約為無損的 1/6 大小）。後端需在 Windows 上執行
 （Windows OCR 交叉檢查）。

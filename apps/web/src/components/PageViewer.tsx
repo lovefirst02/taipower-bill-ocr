@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { PEN_FONT, labelSize, moveMark, resizeHighlight, resizeLabel } from "../marks";
+import { LABEL_FONT, labelSize, moveMark, resizeHighlight, resizeLabel } from "../marks";
 import type { Handle } from "../marks";
 import type { Mark } from "../types";
 
@@ -131,7 +131,8 @@ export function PageViewer({ imageUrl, width, height, marks, selectedId, editabl
                   x={mark.x}
                   y={mark.y + mark.fontSize * 0.85}
                   fontSize={mark.fontSize}
-                  fontFamily={PEN_FONT}
+                  fontFamily={LABEL_FONT}
+                  fontWeight={700}
                   onPointerDown={(event) => begin(event, mark)}
                 >
                   {mark.text}

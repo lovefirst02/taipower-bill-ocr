@@ -171,6 +171,28 @@ class ApiTests(unittest.TestCase):
         rows = [dict(zip(header, [cell.value for cell in line])) for line in sheet.iter_rows(min_row=2)]
         self.assertEqual([(row["上傳者"], row["來源檔案"]) for row in rows], [("Amy", "jan.png")])
 
+    def test_all_evidence_pdfs_download_as_one_zip(self):
+        import zipfile
+
+        self.upload("Amy", "jan.png", "feb.png")
+        self.upload("Ben", "mar.png")
+        first = self.first_item("Amy")["id"]
+        submitted = self.client.post(f"/api/items/{first}/submit", json={"user": "Amy"}).json()
+
+        response = self.client.get("/api/evidence.zip", params={"user": "Amy"})
+        self.assertEqual(response.headers["content-type"], "application/zip")
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        names = sorted(archive.namelist())
+        self.assertEqual(len(names), 2)  # Amy's two bills, not Ben's
+        self.assertEqual([name.split("/")[0] for name in names], ["draft", "submitted"])
+        saved = Path(submitted["evidence_file"])
+        self.assertEqual(archive.read(f"submitted/{saved.name}"), saved.read_bytes())
+        self.assertTrue(all(archive.read(name).startswith(b"%PDF") for name in names))
+
+        only_submitted = zipfile.ZipFile(io.BytesIO(self.client.get("/api/evidence.zip", params={"user": "Amy", "status": "submitted"}).content))
+        self.assertEqual(only_submitted.namelist(), [f"submitted/{saved.name}"])
+        self.assertEqual(self.client.get("/api/evidence.zip", params={"user": "Nobody"}).status_code, 404)
+
     def test_workbook_open_in_excel_is_reported(self):
         self.upload("Amy", "jan.png")
         item_id = self.first_item("Amy")["id"]
