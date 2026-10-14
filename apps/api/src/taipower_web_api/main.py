@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -36,7 +36,7 @@ from .reports import (
     new_evidence_path,
     workbook_dir,
 )
-from .settings import Settings
+from .settings import OCR_BACKENDS, RESTART_REQUIRED, WORKBOOK_MODES, Settings
 from .store import Store, now
 from .worker import OcrWorker, usage_marks_for
 
@@ -62,6 +62,10 @@ class ItemUpdate(BaseModel):
     user: str
     row: dict[str, Any] | None = None
     marks: list[Mark] | None = None
+
+
+class SettingsUpdate(BaseModel):
+    values: dict[str, Any]
 
 
 class ItemDelete(BaseModel):
@@ -118,6 +122,8 @@ def create_app(
     app = FastAPI(title="Taipower Bill OCR", lifespan=lifespan)
     app.state.store, app.state.worker, app.state.settings = store, worker, settings
     app.state.writer = writer
+    # The address the server was started on (set by run() and the launcher).
+    app.state.running = None
 
     def page_or_404(page_id: int) -> dict[str, Any]:
         page = store.page(page_id)
@@ -476,6 +482,72 @@ def create_app(
             "workbooks": settings.workbooks,
         }
 
+    # -------------------------------------------------------------- settings
+    def is_local(request: Request) -> bool:
+        """Settings change only from the PC running the server: there is no login."""
+        return request.client is not None and request.client.host in {"127.0.0.1", "::1"}
+
+    def settings_view(request: Request) -> dict[str, Any]:
+        return {
+            "values": settings.editable(),
+            "locked": sorted(settings.locked),
+            "can_edit": is_local(request),
+            "restart_required": sorted(RESTART_REQUIRED),
+            "running": app.state.running,
+            "options": {"workbooks": list(WORKBOOK_MODES), "ocr_backend": list(OCR_BACKENDS)},
+            "dpi": settings.dpi,
+            "data_dir": str(settings.data_dir),
+        }
+
+    @app.get("/api/settings")
+    def get_settings(request: Request) -> dict[str, Any]:
+        return settings_view(request)
+
+    @app.put("/api/settings")
+    def put_settings(update: SettingsUpdate, request: Request) -> dict[str, Any]:
+        """Save settings; everything but the network address applies at once."""
+        if not is_local(request):
+            raise HTTPException(403, "settings can only be changed on the computer running the server")
+        old_output = settings.output_dir
+        try:
+            changed = settings.update(update.values)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        if "output_dir" in changed:
+            try:
+                settings.output_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                settings.update({"output_dir": str(old_output)})
+                raise HTTPException(400, f"cannot use that folder: {exc}") from None
+            # Bills already submitted keep their evidence PDFs where they are.
+            for page in store.pages(bills_only=True, submitted_only=True):
+                saved = evidence_path(old_output, page)
+                if not Path(page.get("evidence_file") or "").is_absolute():
+                    store.update_page(page["id"], evidence_file=str(saved))
+        settings.save()
+        writer.output_dir = settings.output_dir
+        writer.per_user = settings.per_user_workbooks
+        writer.retry_seconds = settings.workbook_retry_seconds
+        if "ocr_backend" in changed:
+            worker.reload_engine()
+        locked = writer.write_all() if changed & {"output_dir", "workbooks"} else []
+        return {
+            **settings_view(request),
+            "changed": sorted(changed),
+            "restart": bool(changed & RESTART_REQUIRED),
+            "locked_workbooks": locked,
+        }
+
+    @app.post("/api/settings/browse")
+    def browse(request: Request) -> dict[str, Any]:
+        """A folder picker on the server's screen (it is this PC: settings are local only)."""
+        if not is_local(request):
+            raise HTTPException(403, "settings can only be changed on the computer running the server")
+        from .desktop import ask_output_dir
+
+        chosen = ask_output_dir(settings.output_dir)
+        return {"folder": str(chosen) if chosen else None}
+
     @app.get("/api/output")
     def output(user: str) -> dict[str, Any]:
         """Where this user's submitted results are saved."""
@@ -502,6 +574,10 @@ def create_app(
 
 
 def run() -> None:
+    """The server, on the address in the settings (127.0.0.1 unless changed)."""
     import uvicorn
 
-    uvicorn.run("taipower_web_api.main:create_app", factory=True, host="127.0.0.1", port=8765)
+    settings = Settings.from_env()
+    app = create_app(settings)
+    app.state.running = {"host": settings.host, "port": settings.port}
+    uvicorn.run(app, host=settings.host, port=settings.port)

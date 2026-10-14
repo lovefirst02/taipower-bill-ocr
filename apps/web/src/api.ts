@@ -1,4 +1,4 @@
-import type { Column, Item, ItemSummary, Mark, OutputInfo, Row, Upload } from "./types";
+import type { Column, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Upload } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -21,6 +21,9 @@ const json = (body: unknown): RequestInit => ({
 
 export const api = {
   columns: () => request<Column[]>("/api/columns"),
+  settings: () => request<SettingsView>("/api/settings"),
+  saveSettings: (values: SettingsValues) => request<SettingsSaved>("/api/settings", { method: "PUT", ...json({ values }) }),
+  browseFolder: () => request<{ folder: string | null }>("/api/settings/browse", { method: "POST" }),
   output: (user: string) => request<OutputInfo>(`/api/output?user=${encodeURIComponent(user)}`),
 
   upload: (user: string, files: File[]) => {

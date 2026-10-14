@@ -568,6 +568,55 @@ class ApiTests(unittest.TestCase):
         self.client.post(f"/api/items/{first}/reopen", json={"user": "Amy"})
         self.assertEqual(submit(first).name, "jan.pdf")
 
+    def local_client(self):
+        # Requests from the PC running the server (the default client is remote).
+        return TestClient(self.app, client=("127.0.0.1", 50000))
+
+    def test_settings_can_be_changed_only_on_the_server_pc(self):
+        view = self.client.get("/api/settings").json()
+        self.assertFalse(view["can_edit"])
+        self.assertEqual(view["values"]["host"], "127.0.0.1")
+        self.assertEqual(self.client.put("/api/settings", json={"values": {"ocr_backend": "windows"}}).status_code, 403)
+        self.assertTrue(self.local_client().get("/api/settings").json()["can_edit"])
+
+    def test_settings_apply_at_once_and_are_saved(self):
+        local = self.local_client()
+        result = local.put("/api/settings", json={"values": {"ocr_backend": "paddleocr", "workbook_retry_seconds": 30, "port": 9000}}).json()
+        self.assertEqual(result["changed"], ["ocr_backend", "port", "workbook_retry_seconds"])
+        self.assertTrue(result["restart"])  # the port is used at the next start
+        self.assertTrue(self.app.state.worker._reload)
+        self.assertEqual(self.app.state.writer.retry_seconds, 30)
+        saved = Settings.load(self.settings.data_dir)
+        self.assertEqual((saved.ocr_backend, saved.port, saved.workbook_retry_seconds), ("paddleocr", 9000, 30))
+
+    def test_invalid_settings_change_nothing(self):
+        local = self.local_client()
+        response = local.put("/api/settings", json={"values": {"ocr_backend": "windows", "port": 80}})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual((self.settings.ocr_backend, self.settings.port), ("crosscheck", 8765))
+        self.assertFalse(self.settings.config_file.exists())
+
+    def test_new_output_folder_keeps_earlier_evidence(self):
+        import zipfile
+
+        self.upload("Amy", "jan.png")
+        item_id = self.first_item("Amy")["id"]
+        old_pdf = Path(self.client.post(f"/api/items/{item_id}/submit", json={"user": "Amy"}).json()["evidence_file"])
+        new_output = Path(self.temp.name) / "sharepoint"
+        result = self.local_client().put("/api/settings", json={"values": {"output_dir": str(new_output)}}).json()
+        self.assertEqual(result["locked_workbooks"], [])
+        # The workbooks are rebuilt in the new folder and still point at the PDF.
+        report = load_workbook(new_output / "taipower_bills_17.xlsx")["Bills"]
+        header = [cell.value for cell in report[1]]
+        self.assertEqual(Path(report.cell(2, header.index("證據檔") + 1).value), old_pdf)
+        archive = zipfile.ZipFile(io.BytesIO(self.client.get("/api/evidence.zip", params={"user": "Amy"}).content))
+        self.assertEqual(archive.read("submitted/jan.pdf"), old_pdf.read_bytes())
+        # New submissions go to the new folder.
+        self.upload("Amy", "feb.png")
+        feb = next(item["id"] for item in self.client.get("/api/items", params={"user": "Amy"}).json() if item["filename"] == "feb.png")
+        new_pdf = Path(self.client.post(f"/api/items/{feb}/submit", json={"user": "Amy"}).json()["evidence_file"])
+        self.assertEqual(new_pdf.parent, new_output / "evidence" / "Amy")
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
@@ -629,6 +678,28 @@ class PerUserWorkbookTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertFalse(writer.pending)
         self.assertEqual(len(self.rows(self.settings.output_dir / "Amy" / "taipower_bills_17.xlsx")), 1)
+
+
+
+class SettingsLoadTests(unittest.TestCase):
+    def test_config_file_then_command_line_then_environment(self):
+        import json
+        import os
+
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp)
+            (data / "config.json").write_text(json.dumps({"port": 9000, "ocr_backend": "windows", "host": "0.0.0.0"}), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"TAIPOWER_OCR_BACKEND": "paddleocr"}):
+                settings = Settings.load(data, defaults={"workbooks": "per_user"}, overrides={"port": 9100})
+            self.assertEqual((settings.host, settings.port, settings.ocr_backend, settings.workbooks), ("0.0.0.0", 9100, "paddleocr", "per_user"))
+            self.assertEqual(settings.locked, frozenset({"ocr_backend"}))
+            with self.assertRaises(ValueError):
+                settings.update({"ocr_backend": "windows"})
+            # Saving leaves the locked value out of config.json.
+            settings.update({"port": 9200})
+            settings.save()
+            saved = json.loads((data / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual((saved["port"], saved["ocr_backend"]), (9200, "windows"))
 
 
 if __name__ == "__main__":

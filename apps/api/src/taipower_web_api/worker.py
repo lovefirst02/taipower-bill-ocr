@@ -62,6 +62,8 @@ class OcrWorker:
             lambda: PageExtractor(settings.ocr_backend, settings.dpi)
         )
         self._extractor: Any | None = None
+        # Set when the OCR engine setting changes: rebuilt before the next upload.
+        self._reload = False
         self._queue: queue.Queue[int | None] = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="ocr-worker", daemon=True)
         # The upload being read, and the flag that stops it between pages.
@@ -110,6 +112,10 @@ class OcrWorker:
             self.store.set_upload(upload_id, status="queued", error=None)
             self._queue.put(upload_id)
 
+    def reload_engine(self) -> None:
+        """Use the current OCR engine setting from the next upload on."""
+        self._reload = True
+
     def is_current(self, upload_id: int) -> bool:
         return self._current == upload_id
 
@@ -143,6 +149,8 @@ class OcrWorker:
                     continue
                 self._current = upload_id
                 self._cancel.clear()
+                if self._reload:
+                    self._extractor, self._reload = None, False
             try:
                 self.process(upload_id)
             except Exception as exc:  # noqa: BLE001 - keep the worker alive

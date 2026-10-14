@@ -531,15 +531,22 @@ npm test           # 前端與後端測試
 6. 「Download all PDFs」把自己所有帳單的證據 PDF 打包成一個 ZIP：`submitted/` 是送出時存下的版本，
    `draft/` 依目前的標記產生。「Export my Excel」下載自己上傳的所有帳單（含草稿）17 欄格式。
 
-設定（環境變數）：
+設定：按右上角「Settings」在畫面上修改，存在 `<資料資料夾>\config.json`。
+只能在執行伺服器的那台電腦上修改（沒有登入機制，其他電腦只能查看）。網路位址與 port 重新啟動後生效，其他設定存檔後立即生效。
+更換輸出資料夾時，已送出的帳單仍保留在原資料夾，兩個 Excel 會在新資料夾重建並指向原本的證據 PDF。
+
+也可以用環境變數指定；以環境變數指定的項目每次啟動都會優先使用，因此在畫面上會鎖定：
 
 | 變數 | 預設 | 說明 |
 |---|---|---|
-| `TAIPOWER_DATA_DIR` | `data` | 上傳檔、資料庫 |
-| `TAIPOWER_OUTPUT_DIR` | `data/output` | 兩個共用 Excel 與 `evidence\`；可設為 OneDrive 同步的 SharePoint 資料夾 |
-| `TAIPOWER_OCR_BACKEND` | `crosscheck` | 或 `paddleocr`、`windows` |
-| `TAIPOWER_DPI` | `200` | PDF 轉圖解析度 |
+| `TAIPOWER_DATA_DIR` | `data` | 上傳檔、資料庫、`config.json`（只能用環境變數指定） |
+| `TAIPOWER_OUTPUT_DIR` | `data/output` | 兩個 Excel 與 `evidence\`；可設為 OneDrive 同步的 SharePoint 資料夾 |
 | `TAIPOWER_WORKBOOKS` | `shared` | `shared`：所有人一份共用 Excel；`per_user`：每人一份，寫在 `<輸出資料夾>\<名字>\` |
+| `TAIPOWER_OCR_BACKEND` | `crosscheck` | 或 `paddleocr`、`windows` |
+| `TAIPOWER_WORKBOOK_RETRY_SECONDS` | `60` | Excel 被開啟時多久重試一次 |
+| `TAIPOWER_HOST` | `127.0.0.1` | `127.0.0.1`：只有本機；`0.0.0.0`：同一網路的其他電腦也能連（沒有登入，任何人都能使用） |
+| `TAIPOWER_PORT` | `8765` | |
+| `TAIPOWER_DPI` | `200` | PDF 轉圖解析度（只能用環境變數指定；已上傳帳單的標記以此解析度記錄，請勿任意變更） |
 
 ### 沒有伺服器時：單機版
 
@@ -551,7 +558,7 @@ uv run taipower-web-local                 # 或用 uv（需先 npm run build）
 ```
 
 - 第一次執行會跳出資料夾選擇視窗，選擇送出結果要存放的位置（例如 OneDrive 同步的 SharePoint 資料夾），之後會記住；
-  要更換時加上 `--choose-output`，或用 `--output <資料夾>` 直接指定。
+  之後可在「Settings」更換，或加上 `--choose-output` 重新選擇、用 `--output <資料夾>` 直接指定。
 - 程式會自動開啟瀏覽器（`http://127.0.0.1:8765`）；黑色視窗保持開啟即可使用，關閉視窗就結束。
   已經在執行時再開一次，只會再開一個瀏覽器分頁。
 - 上傳檔與資料庫存在 `%LOCALAPPDATA%\TaipowerBillOCR\web\`，只在這台電腦。

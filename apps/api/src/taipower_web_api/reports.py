@@ -113,7 +113,10 @@ def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[
         row[REVIEW_COLUMN] = f"{REVIEWED}；{original}" if original else REVIEWED
     evidence = None
     if submitted and output_dir is not None:
-        evidence = str(evidence_path(output_dir, page).relative_to(output_dir))
+        saved = evidence_path(output_dir, page)
+        # Relative to the output folder; bills submitted before the folder
+        # was changed keep their full path.
+        evidence = str(saved.relative_to(output_dir)) if saved.is_relative_to(output_dir) else str(saved)
     extras = {
         UPLOADER: page["user"],
         SUBMITTER: page.get("submitted_by"),
@@ -271,6 +274,13 @@ class WorkbookWriter:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def write_all(self) -> list[str]:
+        """Rebuild every workbook: the shared pair, or each user's."""
+        if not self.per_user:
+            return self.write()
+        users = {page["user"] for page in self.store.pages(bills_only=True, submitted_only=True)}
+        return [name for user in sorted(users) for name in self.write(user)]
 
     def write(self, user: str | None = None) -> list[str]:
         """Rebuild the workbooks now; returns the ones that were locked."""

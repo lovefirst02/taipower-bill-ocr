@@ -102,3 +102,31 @@ export interface OutputInfo {
   folder: string;
   evidence_folder: string;
 }
+
+export interface SettingsValues {
+  output_dir: string;
+  workbooks: "shared" | "per_user";
+  ocr_backend: string;
+  workbook_retry_seconds: number;
+  host: string;
+  port: number;
+}
+
+export interface SettingsView {
+  values: SettingsValues;
+  /** Fixed by environment variables. */
+  locked: (keyof SettingsValues)[];
+  /** Only on the computer running the server. */
+  can_edit: boolean;
+  restart_required: string[];
+  running: { host: string; port: number } | null;
+  options: { workbooks: string[]; ocr_backend: string[] };
+  dpi: number;
+  data_dir: string;
+}
+
+export interface SettingsSaved extends SettingsView {
+  changed: string[];
+  restart: boolean;
+  locked_workbooks: string[];
+}

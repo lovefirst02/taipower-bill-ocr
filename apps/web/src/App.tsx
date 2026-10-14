@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Review } from "./components/Review";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { BillList, Dropzone, UploadQueue } from "./components/Sidebar";
 import type { Column, ItemSummary, OutputInfo, Upload } from "./types";
 
@@ -45,6 +46,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [output, setOutput] = useState<OutputInfo | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -57,9 +59,10 @@ export default function App() {
     api.columns().then(setColumns).catch(() => setNotice("Cannot reach the server."));
   }, []);
 
-  useEffect(() => {
+  const loadOutput = useCallback(() => {
     if (user) api.output(user).then(setOutput).catch(() => setOutput(null));
   }, [user]);
+  useEffect(loadOutput, [loadOutput]);
 
   useEffect(() => {
     setSelected(null);
@@ -182,6 +185,7 @@ export default function App() {
             Download all PDFs
           </a>
           <a className="button" href={api.exportUrl(user)}>Export my Excel</a>
+          <button onClick={() => setShowSettings(true)}>Settings</button>
           <button className="user" onClick={() => setEditingUser(true)} title="Change name">{user}</button>
         </div>
       </header>
@@ -218,6 +222,7 @@ export default function App() {
           )}
         </main>
       </div>
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} onSaved={loadOutput} />}
       {toast && (
         <div className="toast" role="status" onClick={() => setToast(null)}>
           {toast}
