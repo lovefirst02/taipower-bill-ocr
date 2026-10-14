@@ -383,6 +383,8 @@ powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
 
 使用者端：解壓縮後執行 `TaipowerBillOCR.exe`，不需安裝 Python。PaddleOCR 模型已內含於 `models\`，可離線使用；
 交叉檢查同樣需要 Windows 的繁體中文 OCR 功能。紀錄與錯誤報告存於 `%LOCALAPPDATA%\TaipowerBillOCR\`。
+可以放在路徑含中文或全形符號的資料夾（例如桌面、`【Build】`）或中文使用者名稱的電腦：Paddle 無法讀取這類路徑的模型檔，
+程式會自動改用 `C:\ProgramData\TaipowerBillOCR\` 下的副本（第一次執行時複製，約 20 MB）。
 
 在新電腦上確認 exe 可用（不開視窗，結果寫入 `%LOCALAPPDATA%\TaipowerBillOCR\self_test.json`）：
 

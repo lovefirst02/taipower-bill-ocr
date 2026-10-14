@@ -19,6 +19,7 @@ from .parser import (
     enrich_unruled_tables,
     parse_bill_layout,
 )
+from .paths import paddle_cache_dir, paddle_readable
 from .windows_ocr import WindowsOcrEngine
 
 
@@ -60,6 +61,10 @@ def bundled_model_dir() -> Path | None:
 
 
 def _create_paddle_engine(language: str) -> Any:
+    # PaddleX reads its cache folder when imported; Paddle cannot open model
+    # files under a non-ASCII path (e.g. a Chinese user name), so pick one it can.
+    cache = os.environ.get("PADDLE_PDX_CACHE_HOME") or str(Path.home() / ".paddlex")
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(paddle_cache_dir(Path(cache)))
     try:
         from paddleocr import PaddleOCR
     except ImportError as exc:
@@ -69,9 +74,10 @@ def _create_paddle_engine(language: str) -> Any:
 
     model_options: dict[str, Any] = {}
     if (model_dir := bundled_model_dir()) is not None:
+        # The app may be unpacked to a folder such as 桌面.
         model_options = {
-            "text_detection_model_dir": str(model_dir / DETECTION_MODEL),
-            "text_recognition_model_dir": str(model_dir / RECOGNITION_MODEL),
+            "text_detection_model_dir": str(paddle_readable(model_dir / DETECTION_MODEL)),
+            "text_recognition_model_dir": str(paddle_readable(model_dir / RECOGNITION_MODEL)),
         }
     return PaddleOCR(
         device="cpu",
