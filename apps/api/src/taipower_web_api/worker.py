@@ -35,17 +35,18 @@ log = logging.getLogger("taipower_web_api.worker")
 
 
 def usage_marks_for(store: Store, page: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-    """Marks for 本期 usage: on the bill page itself, else on its back pages."""
-    for candidate in [page, *store.companion_pages(page)]:
-        own = candidate["id"] == page["id"]
+    """Marks for 本期 usage on the bill's back page.
+
+    節電資訊 is printed on the back (page 2), never on the bill page, so the
+    bill page is not searched: a 本期 there would be the wrong thing to mark.
+    """
+    for back in store.companion_pages(page):
         marks, notes = usage_marks(
-            candidate["dataset"],
-            (candidate["image_width"], candidate["image_height"]),
-            None if own else candidate["page_number"],
+            back["dataset"], (back["image_width"], back["image_height"]), back["page_number"]
         )
         if marks:
             return marks, notes
-    return [], [f"{USAGE_LABEL}: 本期度數 (節電資訊) not found on this bill or its back page, add the mark by hand"]
+    return [], [f"{USAGE_LABEL}: 本期度數 (節電資訊) not found on the back page, add the mark by hand"]
 
 
 class OcrWorker:

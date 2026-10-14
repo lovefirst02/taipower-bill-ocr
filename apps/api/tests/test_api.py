@@ -481,6 +481,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(detail["pages"]), 1)
         self.assertTrue(any(note.startswith("Electricity Usage (kWh): 本期度數") for note in detail["mark_notes"]))
 
+    def test_usage_is_never_marked_on_the_bill_page(self):
+        # A 本期 row on the bill page itself is not 節電資訊's: leave it alone.
+        bill = official_sample_bill()
+        bill.ocr_lines += energy_saving_page().ocr_lines
+        bill["energy_saving_info"] = energy_saving_page()["energy_saving_info"]
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: bill):
+            self.upload("Amy", "front.png")
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertFalse(any(mark.get("text") == "Electricity Usage (kWh)" for mark in detail["marks"]))
+        self.assertTrue(any("not found on the back page" in note for note in detail["mark_notes"]))
+
     def test_remove_all_clears_the_queue_except_the_file_being_read(self):
         def broken(self_, path, page):
             raise RuntimeError("cannot read")
