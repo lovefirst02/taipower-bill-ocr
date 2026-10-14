@@ -56,6 +56,8 @@ class Mark(BaseModel):
     group: str | None = None
     # Another page of the PDF (the bill's back page); None for the bill page.
     page: int | None = None
+    # "#rrggbb"; None follows the default colours in the settings.
+    color: str | None = Field(default=None, pattern="^#[0-9a-fA-F]{6}$")
 
 
 class ItemUpdate(BaseModel):
@@ -150,10 +152,12 @@ def create_app(
         return found
 
     def marks_on(page: dict[str, Any], shown: dict[str, Any]) -> list[dict[str, Any]]:
-        """The bill's marks that sit on ``shown`` (the bill page or a back page)."""
+        """The bill's marks that sit on ``shown`` (the bill page or a back page), in colour."""
         if shown["id"] == page["id"]:
-            return [mark for mark in marks_of(page) if mark.get("page") in (None, page["page_number"])]
-        return [mark for mark in marks_of(page) if mark.get("page") == shown["page_number"]]
+            marks = [mark for mark in marks_of(page) if mark.get("page") in (None, page["page_number"])]
+        else:
+            marks = [mark for mark in marks_of(page) if mark.get("page") == shown["page_number"]]
+        return evidence.with_colors(marks, settings.highlight_color, settings.label_color)
 
     def build_evidence_pdf(page: dict[str, Any]) -> bytes:
         """The bill page, then each back page that has marks."""
@@ -321,6 +325,7 @@ def create_app(
             "marks": marks_of(page),
             "mark_notes": page["mark_notes"],
             "image": {"width": page["image_width"], "height": page["image_height"], "dpi": settings.dpi},
+            "colors": {"highlight": settings.highlight_color, "label": settings.label_color},
             "pages": [
                 {"page": shown["page_number"], "width": shown["image_width"], "height": shown["image_height"], "bill": shown["id"] == page["id"]}
                 for shown in view_pages(page)

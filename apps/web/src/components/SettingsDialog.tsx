@@ -9,6 +9,8 @@ const ENV_NAMES: Record<keyof SettingsValues, string> = {
   workbook_retry_seconds: "TAIPOWER_WORKBOOK_RETRY_SECONDS",
   host: "TAIPOWER_HOST",
   port: "TAIPOWER_PORT",
+  highlight_color: "TAIPOWER_HIGHLIGHT_COLOR",
+  label_color: "TAIPOWER_LABEL_COLOR",
 };
 
 const ENGINES: Record<string, string> = {
@@ -143,6 +145,48 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
             </span>
             {lockNote("workbook_retry_seconds")}
           </label>
+        </section>
+
+        <section>
+          <h4>Evidence marks</h4>
+          <div className="setting">
+            <span>Default colours</span>
+            <div className="color-row">
+              <label>
+                <input
+                  type="color"
+                  value={values.highlight_color}
+                  disabled={disabled("highlight_color")}
+                  onChange={(event) => set("highlight_color", event.target.value)}
+                />
+                Highlighter
+              </label>
+              <label>
+                <input
+                  type="color"
+                  value={values.label_color}
+                  disabled={disabled("label_color")}
+                  onChange={(event) => set("label_color", event.target.value)}
+                />
+                Text
+              </label>
+              {view.can_edit && (
+                <button
+                  type="button"
+                  className="link"
+                  disabled={busy || (values.highlight_color === "#ffeb3b" && values.label_color === "#d32f2f")}
+                  onClick={() => setValues({ ...values, highlight_color: "#ffeb3b", label_color: "#d32f2f" })}
+                >
+                  Yellow and red
+                </button>
+              )}
+            </div>
+            {lockNote("highlight_color")}
+            {lockNote("label_color")}
+            <span className="hint">
+              For marks without a colour of their own; each mark can be given its own colour in the marks list. Evidence PDFs already submitted keep their colours.
+            </span>
+          </div>
         </section>
 
         <section>

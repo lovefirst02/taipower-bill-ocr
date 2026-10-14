@@ -1,5 +1,5 @@
 // Geometry for editing evidence marks, in page-image pixels.
-import type { Highlight, Label, Mark, ViewPage } from "./types";
+import type { Highlight, Label, Mark, MarkColors, ViewPage } from "./types";
 
 export const MIN_SIZE = 12;
 // Same fonts as the server: Arial Bold, Microsoft JhengHei Bold for Chinese.
@@ -91,6 +91,15 @@ export function newLabel(page: Bounds, text: string, around?: { x: number; y: nu
 }
 
 export const EVIDENCE_LABELS = ["Billing period", "Grey Electricity Cost", "Electricity Usage (kWh)"];
+
+export const DEFAULT_COLORS: MarkColors = { highlight: "#ffeb3b", label: "#d32f2f" };
+// Highlights are drawn see-through, as in the evidence PDF.
+export const HIGHLIGHT_OPACITY = 0.4;
+
+/** The colour a mark is drawn in: its own, else the default for its kind. */
+export function markColor(mark: Mark, colors: MarkColors = DEFAULT_COLORS): string {
+  return mark.color ?? (mark.type === "highlight" ? colors.highlight : colors.label);
+}
 
 /** Whether a mark sits on the given page of the review (the bill page has none set). */
 export function isOnPage(mark: Mark, page: ViewPage): boolean {

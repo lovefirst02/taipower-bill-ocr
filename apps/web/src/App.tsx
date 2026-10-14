@@ -3,7 +3,7 @@ import { api } from "./api";
 import { Review } from "./components/Review";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { BillList, Dropzone, UploadQueue } from "./components/Sidebar";
-import type { Column, ItemSummary, OutputInfo, Upload } from "./types";
+import type { Column, ItemSummary, MarkColors, OutputInfo, Upload } from "./types";
 
 const USER_KEY = "taipower-user";
 
@@ -47,6 +47,13 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [output, setOutput] = useState<OutputInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [colors, setColors] = useState<MarkColors | null>(null);
+  const loadColors = useCallback(() => {
+    api.settings()
+      .then((view) => setColors({ highlight: view.values.highlight_color, label: view.values.label_color }))
+      .catch(() => setColors(null));
+  }, []);
+  useEffect(loadColors, [loadColors]);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -213,6 +220,7 @@ export default function App() {
               onChanged={() => void refresh()}
               onNext={nextToReview}
               onNotify={setToast}
+              colors={colors}
             />
           ) : (
             <div className="welcome">
@@ -222,7 +230,7 @@ export default function App() {
           )}
         </main>
       </div>
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} onSaved={loadOutput} />}
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} onSaved={() => { loadOutput(); loadColors(); }} />}
       {toast && (
         <div className="toast" role="status" onClick={() => setToast(null)}>
           {toast}

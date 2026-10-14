@@ -24,6 +24,22 @@ HIGHLIGHT_RGB = (255, 235, 59)  # highlighter yellow
 HIGHLIGHT_ALPHA = 0.40
 LABEL_RGB = (211, 47, 47)  # red
 
+
+def _rgb(mark: Mapping[str, Any]) -> tuple[int, int, int]:
+    """A mark's colour ("#rrggbb"), or the default for its kind."""
+    color = str(mark.get("color") or "")
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        return tuple(int(color[index:index + 2], 16) for index in (1, 3, 5))  # type: ignore[return-value]
+    return HIGHLIGHT_RGB if mark["type"] == "highlight" else LABEL_RGB
+
+
+def with_colors(marks: list[Mapping[str, Any]], highlight: str, label: str) -> list[dict[str, Any]]:
+    """Marks with no colour of their own get the default for their kind."""
+    return [
+        {**mark, "color": mark.get("color") or (highlight if mark["type"] == "highlight" else label)}
+        for mark in marks
+    ]
+
 # Plain bold fonts that ship with Windows: Arial for Latin text, and
 # Microsoft JhengHei when a label has Chinese characters (Arial has none).
 _LATIN_FONTS = [Path("C:/Windows/Fonts/arialbd.ttf"), Path("C:/Windows/Fonts/segoeuib.ttf")]
@@ -295,7 +311,7 @@ def draw_png(image: Image.Image, marks: list[Mapping[str, Any]]) -> Image.Image:
         if mark["type"] == "highlight":
             draw.rectangle(
                 [mark["x"], mark["y"], mark["x"] + mark["w"], mark["y"] + mark["h"]],
-                fill=(*HIGHLIGHT_RGB, alpha),
+                fill=(*_rgb(mark), alpha),
             )
     combined = Image.alpha_composite(base, layer)
     draw = ImageDraw.Draw(combined)
@@ -303,7 +319,7 @@ def draw_png(image: Image.Image, marks: list[Mapping[str, Any]]) -> Image.Image:
         if mark["type"] == "label":
             font = _pil_font(max(1, round(mark["fontSize"])), mark["text"])
             left, top, _, _ = font.getbbox(mark["text"])
-            draw.text((mark["x"] - left, mark["y"] - top), mark["text"], font=font, fill=LABEL_RGB)
+            draw.text((mark["x"] - left, mark["y"] - top), mark["text"], font=font, fill=_rgb(mark))
     return combined.convert("RGB")
 
 
@@ -334,9 +350,9 @@ def _overlay_pdf(page_width: float, page_height: float, scale: float, marks: lis
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(page_width, page_height))
     left, bottom = offset
-    pdf.setFillColorRGB(*(channel / 255 for channel in HIGHLIGHT_RGB), alpha=HIGHLIGHT_ALPHA)
     for mark in marks:
         if mark["type"] == "highlight":
+            pdf.setFillColorRGB(*(channel / 255 for channel in _rgb(mark)), alpha=HIGHLIGHT_ALPHA)
             pdf.rect(
                 left + mark["x"] * scale,
                 bottom + page_height - (mark["y"] + mark["h"]) * scale,
@@ -345,9 +361,9 @@ def _overlay_pdf(page_width: float, page_height: float, scale: float, marks: lis
                 stroke=0,
                 fill=1,
             )
-    pdf.setFillColorRGB(*(channel / 255 for channel in LABEL_RGB), alpha=1)
     for mark in marks:
         if mark["type"] == "label":
+            pdf.setFillColorRGB(*(channel / 255 for channel in _rgb(mark)), alpha=1)
             size = mark["fontSize"] * scale
             pil_font = _pil_font(max(1, round(mark["fontSize"])), mark["text"])
             _, top, _, bottom_px = pil_font.getbbox(mark["text"])

@@ -17,6 +17,8 @@ export interface Highlight {
   group?: string;
   /** Another page of the PDF (the bill's back page); absent for the bill page. */
   page?: number;
+  /** "#rrggbb"; absent follows the default colour in the settings. */
+  color?: string;
 }
 
 export interface Label {
@@ -28,6 +30,7 @@ export interface Label {
   fontSize: number;
   group?: string;
   page?: number;
+  color?: string;
 }
 
 export type Mark = Highlight | Label;
@@ -83,11 +86,18 @@ export interface Item {
   image: { width: number; height: number; dpi: number };
   /** The bill page first, then its back pages, which can hold marks too. */
   pages: ViewPage[];
+  /** Default colours for marks without their own. */
+  colors: MarkColors;
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];
   archived_evidence?: string | null;
   evidence_file?: string;
+}
+
+export interface MarkColors {
+  highlight: string;
+  label: string;
 }
 
 export interface ViewPage {
@@ -110,6 +120,8 @@ export interface SettingsValues {
   workbook_retry_seconds: number;
   host: string;
   port: number;
+  highlight_color: string;
+  label_color: string;
 }
 
 export interface SettingsView {

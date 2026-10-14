@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { LABEL_FONT, labelSize, moveMark, resizeHighlight, resizeLabel } from "../marks";
+import { DEFAULT_COLORS, HIGHLIGHT_OPACITY, LABEL_FONT, labelSize, markColor, moveMark, resizeHighlight, resizeLabel } from "../marks";
 import type { Handle } from "../marks";
-import type { Mark } from "../types";
+import type { Mark, MarkColors } from "../types";
 
 interface Props {
   imageUrl: string;
   width: number;
   height: number;
   marks: Mark[];
+  /** Default colours for marks without their own. */
+  colors?: MarkColors;
   selectedId: string | null;
   editable: boolean;
   /** A field's position to point at (dashed blue), in image pixels. */
@@ -23,7 +25,7 @@ type Drag =
 
 const HANDLES: Handle[] = ["nw", "ne", "sw", "se"];
 
-export function PageViewer({ imageUrl, width, height, marks, selectedId, editable, focusBox, onSelect, onChange }: Props) {
+export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_COLORS, selectedId, editable, focusBox, onSelect, onChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1); // 1 = fit to panel width
@@ -118,6 +120,8 @@ export function PageViewer({ imageUrl, width, height, marks, selectedId, editabl
                 <rect
                   key={mark.id}
                   className="highlight"
+                  fill={markColor(mark, colors)}
+                  fillOpacity={HIGHLIGHT_OPACITY}
                   x={mark.x}
                   y={mark.y}
                   width={mark.w}
@@ -128,6 +132,7 @@ export function PageViewer({ imageUrl, width, height, marks, selectedId, editabl
                 <text
                   key={mark.id}
                   className="pen"
+                  fill={markColor(mark, colors)}
                   x={mark.x}
                   y={mark.y + mark.fontSize * 0.85}
                   fontSize={mark.fontSize}

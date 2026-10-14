@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { isOnPage, newHighlight, newLabel } from "../marks";
-import type { Column, Item, Mark, Row } from "../types";
+import type { Column, Item, Mark, MarkColors, Row } from "../types";
 import { FieldForm } from "./FieldForm";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
@@ -14,6 +14,8 @@ interface Props {
   onNext: () => void;
   /** Messages that must outlive this view, e.g. after moving to the next bill. */
   onNotify: (text: string) => void;
+  /** Current default mark colours (they can change on the settings page). */
+  colors?: MarkColors | null;
 }
 
 const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -30,7 +32,7 @@ function withOtherAdjustment(row: Row): Row {
   return { ...row, 其他調整費用: other };
 }
 
-export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: Props) {
+export function Review({ itemId, user, columns, onChanged, onNext, onNotify, colors: defaultColors }: Props) {
   const [item, setItem] = useState<Item | null>(null);
   const [row, setRow] = useState<Row>({});
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -206,6 +208,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
             width={page.width}
             height={page.height}
             marks={pageMarks}
+            colors={defaultColors ?? item.colors}
             selectedId={selectedId}
             editable={editable}
             focusBox={focusBox}
@@ -216,6 +219,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify }: P
         <aside className="side">
           <MarksPanel
             marks={pageMarks}
+            colors={defaultColors ?? item.colors}
             notes={item.mark_notes}
             selectedId={selectedId}
             editable={editable}

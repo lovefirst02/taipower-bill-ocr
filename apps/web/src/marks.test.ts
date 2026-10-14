@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOnPage, labelSize, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
+import { isOnPage, labelSize, markColor, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
 import type { Highlight, Label } from "./types";
 
 const page = { width: 1654, height: 2339 };
@@ -69,5 +69,20 @@ describe("isOnPage", () => {
   it("puts marks with a page on that page", () => {
     expect(isOnPage({ ...mark, page: 2 }, back)).toBe(true);
     expect(isOnPage({ ...mark, page: 2 }, bill)).toBe(false);
+  });
+});
+
+describe("markColor", () => {
+  const colors = { highlight: "#00ff00", label: "#0000ff" };
+  const highlight = { id: "h", type: "highlight" as const, x: 0, y: 0, w: 10, h: 10 };
+  const label = { id: "l", type: "label" as const, x: 0, y: 0, text: "A", fontSize: 20 };
+
+  it("uses the default for the mark's kind", () => {
+    expect(markColor(highlight, colors)).toBe("#00ff00");
+    expect(markColor(label, colors)).toBe("#0000ff");
+  });
+
+  it("prefers the mark's own colour", () => {
+    expect(markColor({ ...label, color: "#123456" }, colors)).toBe("#123456");
   });
 });

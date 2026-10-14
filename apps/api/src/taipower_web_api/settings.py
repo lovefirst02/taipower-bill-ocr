@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -25,7 +26,10 @@ EDITABLE: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "workbook_retry_seconds": ("TAIPOWER_WORKBOOK_RETRY_SECONDS", float),
     "host": ("TAIPOWER_HOST", lambda value: str(value).strip()),
     "port": ("TAIPOWER_PORT", int),
+    "highlight_color": ("TAIPOWER_HIGHLIGHT_COLOR", lambda value: str(value).strip().lower()),
+    "label_color": ("TAIPOWER_LABEL_COLOR", lambda value: str(value).strip().lower()),
 }
+COLOR = re.compile(r"^#[0-9a-f]{6}$")
 # Used only when the server starts.
 RESTART_REQUIRED = {"host", "port"}
 
@@ -49,6 +53,9 @@ class Settings:
     # 127.0.0.1: this PC only; 0.0.0.0: every computer on the network.
     host: str = "127.0.0.1"
     port: int = 8765
+    # Evidence marks without a colour of their own: highlighter and red pen.
+    highlight_color: str = "#ffeb3b"
+    label_color: str = "#d32f2f"
     web_dist: Path = REPO_ROOT / "apps" / "web" / "dist"
     # Settings fixed by environment variables.
     locked: frozenset[str] = field(default_factory=frozenset)
@@ -69,6 +76,9 @@ class Settings:
             raise ValueError("host is required")
         if not str(self.output_dir).strip() or str(self.output_dir) == ".":
             raise ValueError("output folder is required")
+        for name in ("highlight_color", "label_color"):
+            if not COLOR.match(getattr(self, name)):
+                raise ValueError(f"{name.replace('_', ' ')} must look like #ffeb3b")
 
     @property
     def database(self) -> Path:

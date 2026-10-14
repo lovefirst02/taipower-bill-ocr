@@ -617,6 +617,24 @@ class ApiTests(unittest.TestCase):
         new_pdf = Path(self.client.post(f"/api/items/{feb}/submit", json={"user": "Amy"}).json()["evidence_file"])
         self.assertEqual(new_pdf.parent, new_output / "evidence" / "Amy")
 
+    def test_marks_use_their_own_colour_or_the_default(self):
+        self.upload("Amy", "jan.png")
+        item_id = self.first_item("Amy")["id"]
+        self.assertEqual(self.client.get(f"/api/items/{item_id}").json()["colors"], {"highlight": "#ffeb3b", "label": "#d32f2f"})
+        marks = [
+            {"id": "a", "type": "highlight", "x": 100, "y": 100, "w": 200, "h": 60, "color": "#0000ff"},
+            {"id": "b", "type": "highlight", "x": 100, "y": 300, "w": 200, "h": 60},
+        ]
+        self.client.put(f"/api/items/{item_id}", json={"user": "Amy", "marks": marks})
+        # The default changes on the settings page; marks without a colour follow it.
+        self.local_client().put("/api/settings", json={"values": {"highlight_color": "#00ff00"}})
+        image = Image.open(io.BytesIO(self.client.get(f"/api/items/{item_id}/evidence.png").content)).convert("RGB")
+        self.assertEqual(image.getpixel((200, 130)), (153, 153, 255))  # blue at 40% on white
+        self.assertEqual(image.getpixel((200, 330)), (153, 255, 153))  # the new default, green
+        bad = self.client.put(f"/api/items/{item_id}", json={"user": "Amy", "marks": [{**marks[0], "color": "blue"}]})
+        self.assertEqual(bad.status_code, 422)
+        self.assertEqual(self.local_client().put("/api/settings", json={"values": {"label_color": "red"}}).status_code, 400)
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
