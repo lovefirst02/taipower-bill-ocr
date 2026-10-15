@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Column, Issue, Row } from "../types";
 
 interface Props {
@@ -24,12 +25,44 @@ const SECTIONS: { title: string; match: (key: string) => boolean }[] = [
 
 const format = (value: string | number | null | undefined) => (value === null || value === undefined ? "" : String(value));
 
-function parse(column: Column, text: string): string | number | null {
+export function parse(column: Column, text: string): string | number | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
   if (!column.numeric) return trimmed;
   const number = Number(trimmed.replace(/,/g, ""));
   return Number.isFinite(number) ? number : trimmed;
+}
+
+type Value = string | number | null | undefined;
+
+/**
+ * Shows what is typed while the field is being edited ("12." or "1.50"),
+ * while the parsed number is what is saved; turning "12." into 12 on every
+ * keystroke would drop the decimal point before its digits could be typed.
+ */
+function FieldInput({ column, value, readOnly, onFocus, onChange }: {
+  column: Column;
+  value: Value;
+  readOnly: boolean;
+  onFocus: () => void;
+  onChange: (value: string | number | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  // A value changed elsewhere (e.g. "Use …") replaces the text being typed.
+  const shown = draft !== null && format(parse(column, draft)) === format(value) ? draft : format(value);
+  return (
+    <input
+      value={shown}
+      readOnly={readOnly}
+      inputMode={column.numeric ? "decimal" : "text"}
+      onFocus={onFocus}
+      onBlur={() => setDraft(null)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onChange(parse(column, event.target.value));
+      }}
+    />
+  );
 }
 
 export function FieldForm({ columns, row, ocrRow, issues, alternatives, editable, focused, onFocus, onChange }: Props) {
@@ -59,12 +92,12 @@ export function FieldForm({ columns, row, ocrRow, issues, alternatives, editable
                     {column.label}
                     <small>{column.key.replace(/^.*_/, "").replace(/^(Billing Period|Custom No\.) /, "")}</small>
                   </span>
-                  <input
-                    value={format(value)}
+                  <FieldInput
+                    column={column}
+                    value={value}
                     readOnly={!editable || !column.editable}
-                    inputMode={column.numeric ? "decimal" : "text"}
                     onFocus={() => onFocus(column.key)}
-                    onChange={(event) => onChange(column.key, parse(column, event.target.value))}
+                    onChange={(next) => onChange(column.key, next)}
                   />
                   {editable && alternative !== undefined && format(alternative) !== format(value) && (
                     <button type="button" className="alt" onClick={() => onChange(column.key, alternative)}>
