@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { SettingsValues, SettingsView } from "../types";
+import type { KeywordSetting, SettingsValues, SettingsView } from "../types";
 
 const ENV_NAMES: Record<keyof SettingsValues, string> = {
   output_dir: "TAIPOWER_OUTPUT_DIR",
@@ -11,7 +11,23 @@ const ENV_NAMES: Record<keyof SettingsValues, string> = {
   port: "TAIPOWER_PORT",
   highlight_color: "TAIPOWER_HIGHLIGHT_COLOR",
   label_color: "TAIPOWER_LABEL_COLOR",
+  company_names: "TAIPOWER_COMPANY_NAMES",
+  self_terms: "TAIPOWER_SELF_TERMS",
+  period_keywords: "TAIPOWER_PERIOD_KEYWORDS",
+  usage_keywords: "TAIPOWER_USAGE_KEYWORDS",
+  cost_keywords: "TAIPOWER_COST_KEYWORDS",
+  exclude_keywords: "TAIPOWER_EXCLUDE_KEYWORDS",
 };
+
+// Keywords for documents that are not Taipower bills, in the order shown.
+const KEYWORDS: { key: KeywordSetting; label: string; hint: string }[] = [
+  { key: "company_names", label: "Company names", hint: "How landlords write your company: the row or paragraph naming it is preferred." },
+  { key: "self_terms", label: "Words for your own share", hint: "e.g. 本公司, 貴公司, 承租戶 — also preferred." },
+  { key: "period_keywords", label: "Billing period", hint: "Words before the period's dates." },
+  { key: "usage_keywords", label: "Usage (kWh)", hint: "Words or units beside the kWh, most specific first." },
+  { key: "cost_keywords", label: "Cost", hint: "Words beside the amount; 未稅/含稅 nearby tell before and after tax apart." },
+  { key: "exclude_keywords", label: "Avoid values near", hint: "e.g. 全棟, 公設, 上期 — the building's or another period's numbers." },
+];
 
 const ENGINES: Record<string, string> = {
   crosscheck: "PaddleOCR + Windows OCR cross-check (recommended)",
@@ -56,7 +72,7 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
   const lockNote = (key: keyof SettingsValues) =>
     view.locked.includes(key) ? <span className="hint">Set by the {ENV_NAMES[key]} environment variable</span> : null;
   const set = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => setValues({ ...values, [key]: value });
-  const dirty = (Object.keys(values) as (keyof SettingsValues)[]).some((key) => values[key] !== view.values[key]);
+  const dirty = (Object.keys(values) as (keyof SettingsValues)[]).some((key) => JSON.stringify(values[key]) !== JSON.stringify(view.values[key]));
 
   const browse = async () => {
     setBusy(true);
@@ -187,6 +203,39 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
               For marks without a colour of their own; each mark can be given its own colour in the marks list. Evidence PDFs already submitted keep their colours.
             </span>
           </div>
+        </section>
+
+        <section>
+          <h4>Other documents (not Taipower bills)</h4>
+          <span className="hint">
+            Uploads that are not Taipower bills — such as a landlord&apos;s allocation for a shared meter — are read for these words.
+            One per line. Changes apply to new uploads, or press &quot;Detect again&quot; on a document.
+          </span>
+          <div className="keyword-grid">
+            {KEYWORDS.map(({ key, label, hint }) => (
+              <label key={key} className="setting">
+                <span>{label}</span>
+                <textarea
+                  rows={key === "company_names" ? 3 : 4}
+                  value={values[key].join("\n")}
+                  disabled={disabled(key)}
+                  placeholder={key === "company_names" ? "e.g. 甲股份有限公司" : ""}
+                  onChange={(event) => set(key, event.target.value.split("\n"))}
+                />
+                {lockNote(key) ?? <span className="hint">{hint}</span>}
+              </label>
+            ))}
+          </div>
+          {view.can_edit && (
+            <button
+              type="button"
+              className="link"
+              disabled={busy}
+              onClick={() => setValues({ ...values, ...Object.fromEntries(KEYWORDS.filter(({ key }) => key !== "company_names").map(({ key }) => [key, view.keyword_defaults[key]])) })}
+            >
+              Default keywords (company names are kept)
+            </button>
+          )}
         </section>
 
         <section>

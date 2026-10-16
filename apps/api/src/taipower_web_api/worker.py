@@ -243,10 +243,11 @@ class OcrWorker:
             cross_check_error=event.cross_check_error,
         ).as_json()
         width, height = render_page(path, event.page_number, self.settings.dpi).size
-        # A page counts as a bill when OCR found a charge breakdown with at
-        # least a period or an amount; an empty layout match (e.g. a photo
-        # that is not a bill) is kept for the record but not sent to review.
-        is_bill = event.record is not None and any(
+        # A page counts as a Taipower bill when OCR found a charge breakdown
+        # with at least a period or an amount, on a page that is one. Other
+        # pages are kept for the record; an upload with none becomes another
+        # kind of document (documents.detect).
+        is_bill = event.record is not None and documents.is_taipower_bill(event.bill) and any(
             event.record.row.get(column) is not None
             for column in ("Billing Period 計費期間", "基本電費", "流動電費", "稅前應繳總金額", "應繳總金額")
         )

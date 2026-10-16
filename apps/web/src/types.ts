@@ -19,6 +19,8 @@ export interface Highlight {
   page?: number;
   /** "#rrggbb"; absent follows the default colour in the settings. */
   color?: string;
+  /** The value this mark is evidence for; picking a new value replaces it. */
+  field?: string;
 }
 
 export interface Label {
@@ -31,6 +33,7 @@ export interface Label {
   group?: string;
   page?: number;
   color?: string;
+  field?: string;
 }
 
 export type Mark = Highlight | Label;
@@ -62,12 +65,29 @@ export interface ItemSummary {
   billing_period: string | null;
   customer_number: string | null;
   total: number | null;
+  kind: DocumentKind;
   submitted_at: string | null;
+}
+
+/** A Taipower bill, or another document (e.g. a landlord's allocation). */
+export type DocumentKind = "taipower" | "other";
+
+/** Where a value came from. */
+export type ValueSource = "taipower" | "keyword" | "pick" | "manual" | "alternative";
+
+export interface OcrLine {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface Location {
   box: [number, number, number, number];
   exact: boolean;
+  /** The page it is on, when not the item's own page. */
+  page?: number | null;
 }
 
 export interface Item {
@@ -88,6 +108,10 @@ export interface Item {
   pages: ViewPage[];
   /** Default colours for marks without their own. */
   colors: MarkColors;
+  kind: DocumentKind;
+  sources: Record<string, ValueSource>;
+  /** The columns reviewed for this item (another kind of document has fewer). */
+  columns: string[] | null;
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];
@@ -105,6 +129,8 @@ export interface ViewPage {
   width: number;
   height: number;
   bill: boolean;
+  /** OCR text on the page, for picking values on the image. */
+  lines: OcrLine[];
 }
 
 export interface OutputInfo {
@@ -122,7 +148,15 @@ export interface SettingsValues {
   port: number;
   highlight_color: string;
   label_color: string;
+  company_names: string[];
+  self_terms: string[];
+  period_keywords: string[];
+  usage_keywords: string[];
+  cost_keywords: string[];
+  exclude_keywords: string[];
 }
+
+export type KeywordSetting = "company_names" | "self_terms" | "period_keywords" | "usage_keywords" | "cost_keywords" | "exclude_keywords";
 
 export interface SettingsView {
   values: SettingsValues;
@@ -135,6 +169,7 @@ export interface SettingsView {
   options: { workbooks: string[]; ocr_backend: string[] };
   dpi: number;
   data_dir: string;
+  keyword_defaults: Record<KeywordSetting, string[]>;
 }
 
 export interface SettingsSaved extends SettingsView {

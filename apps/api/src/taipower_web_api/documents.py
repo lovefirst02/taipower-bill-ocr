@@ -47,6 +47,23 @@ _NAMES = {PERIOD: ("Billing period", "計費期間"), USAGE: ("Usage (kWh)", "�
           PRETAX: ("Cost before tax", "未稅金額"), TOTAL: ("Cost with tax", "含稅金額")}
 
 
+# Printed on Taipower bills, old and new; a landlord's statement may name
+# 台電 or the meter's 電號, but not Taipower's own charge lines.
+TAIPOWER_WORDS = ("台灣電力", "臺灣電力", "taiwanpower", "流動電費", "基本電費", "計費度數", "經常度數", "繳費憑證")
+
+
+def is_taipower_bill(bill: Any) -> bool:
+    """Whether a page is a Taipower bill: a known layout, or Taipower's own wording.
+
+    The parser's fallback layout reads any document, so its result alone
+    does not tell (a landlord's allocation also has a 計費期間).
+    """
+    if bill.get("document_type") not in (None, "unknown"):
+        return True
+    text = "".join(line.text for line in getattr(bill, "ocr_lines", None) or []).replace(" ", "").lower()
+    return any(word.lower() in text for word in TAIPOWER_WORDS)
+
+
 def keywords_of(settings: Settings) -> dict[str, list[str]]:
     return {key: list(getattr(settings, key)) for key in KEYWORD_SETTINGS}
 
@@ -81,10 +98,9 @@ def detect(store: Store, first: dict[str, Any], settings: Settings) -> dict[str,
         others = [candidate.value for candidate in found.candidates[column][1:] if candidate.value != best.value]
         if others:
             alternatives[column] = others[0]
-        keyword = f"「{best.keyword}」" if best.keyword else ""
         issues.append({
-            "zh": f"{zh}以關鍵字{keyword}找到，請確認",
-            "en": f"{en}: found by keyword{' ' + best.keyword if best.keyword else ''} — check it",
+            "zh": f"{zh}以關鍵字「{best.keyword}」找到，請確認" if best.keyword else f"{zh}由頁面內容推測，請確認",
+            "en": f"{en}: found by the keyword {best.keyword} — check it" if best.keyword else f"{en}: found on the page — check it",
             "columns": [column],
         })
     for note in found.notes:

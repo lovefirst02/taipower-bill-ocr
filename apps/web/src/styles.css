@@ -79,6 +79,8 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .settings .choice { display: flex; gap: 6px; align-items: baseline; font-weight: normal; }
 .settings .hint { color: var(--muted); font-size: 12px; text-align: left; margin: 0; }
 .settings .hint.danger { color: var(--danger); }
+.keyword-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.settings textarea { font: inherit; font-size: 12px; padding: 5px 7px; resize: vertical; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; }
 .queue-actions { display: flex; gap: 2px; }
 button.link.danger { color: var(--danger); }
@@ -144,6 +146,14 @@ main { flex: 1; min-width: 0; display: flex; }
 .viewer-page img { display: block; width: 100%; user-select: none; }
 .marks { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .marks .pen { user-select: none; }
+.marks .pick-layer { fill: transparent; cursor: crosshair; }
+.marks .pick-box { fill: rgba(26, 115, 232, 0.12); stroke: #1a73e8; stroke-dasharray: 8 5; pointer-events: none; }
+.hint.picking { color: #1a73e8; font-weight: 600; }
+.field .pick { padding: 1px 6px; font-size: 11px; grid-area: alt; justify-self: start; }
+.field .pick.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+.field .source { font-size: 10px; color: var(--muted); margin-left: 6px; font-weight: normal; }
+.field-actions { grid-area: alt; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.kind-badge { font-size: 10px; padding: 0 5px; border-radius: 8px; background: #efe6fb; color: #6b3fa0; margin-left: 4px; }
 .marks.editable .highlight, .marks.editable .pen { cursor: move; }
 .marks .selection { fill: none; stroke: var(--accent); stroke-dasharray: 8 6; pointer-events: none; }
 .marks .handle { fill: #fff; stroke: var(--accent); stroke-width: 2; }

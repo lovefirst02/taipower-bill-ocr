@@ -127,11 +127,17 @@ def period_days(period: str) -> int | None:
     return _days(dates[0], dates[1]) if len(dates) >= 2 else None
 
 
+# A number followed by one of these is a floor, a date part or a count, not kWh or money.
+_NOT_AMOUNT = re.compile(r"\s*(樓|層|f(?![a-z])|月|日|年|號|天|戶|人|%|％)", re.IGNORECASE)
+
+
 def numbers(text: str) -> list[tuple[float, int]]:
-    """Every number in ``text`` (not part of a date) with where it starts."""
+    """Every number in ``text`` (not part of a date, a floor...) with where it starts."""
     without_dates = _DATE.sub(lambda match: " " * len(match.group()), text)
     found = []
     for match in _NUMBER.finditer(without_dates):
+        if _NOT_AMOUNT.match(without_dates, match.end()):
+            continue
         try:
             found.append((float(match.group().replace(",", "")), match.start()))
         except ValueError:
@@ -329,7 +335,8 @@ def _overlaps(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
 
 def _settle_tax(result: Extraction, pretax: list[Candidate], taxed: list[Candidate], unknown: list[Candidate]) -> None:
     """Pre-tax and tax-included amounts; one is worked out from the other when missing."""
-    if not pretax and unknown:
+    # An amount stated with tax is better evidence than one of unknown kind.
+    if not pretax and unknown and not taxed:
         pretax = [Candidate(c.value, c.score - 5, c.page, c.box, c.keyword, "tax not stated") for c in unknown]
         result.notes.append("Cost: the document does not say whether tax is included; taken as before tax")
     if pretax:

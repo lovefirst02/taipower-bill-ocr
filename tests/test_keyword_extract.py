@@ -54,6 +54,17 @@ class KeywordExtractionTests(unittest.TestCase):
         self.assertEqual(result.best(PRETAX).value, 35271)
         self.assertTrue(any("÷ 1.05" in note for note in result.notes))
 
+    def test_letter_with_a_floor_number_and_only_an_amount_with_tax(self):
+        letter = [
+            *row(140, ("電費繳款通知", 560, 300)),
+            *row(380, ("貴公司承租本大樓 3 樓，113年4月1日至113年4月30日", 120, 1100)),
+            *row(440, ("分攤用電 14,200 度，應繳電費 44,730 元（含稅），", 120, 1100)),
+        ]
+        result = extract(letter)
+        self.assertEqual(result.best(USAGE).value, 14200)
+        self.assertEqual(result.best(TOTAL).value, 44730)
+        self.assertEqual(result.best(PRETAX).value, 42600)  # 44,730 ÷ 1.05, not the "3" of 3 樓
+
     def test_western_dates_and_an_amount_without_tax_wording(self):
         lines = [
             *row(100, ("使用期間", 80, 120), ("2024/03/01 - 2024/03/31", 240, 330)),
@@ -97,6 +108,7 @@ class ParsingTests(unittest.TestCase):
     def test_numbers_skip_dates(self):
         self.assertEqual([value for value, _ in numbers("113/01/01 用電 1,234.5 度")], [1234.5])
         self.assertEqual([value for value, _ in numbers("NT$12,345")], [12345])
+        self.assertEqual([value for value, _ in numbers("3 樓 5F 共 12 戶 電費 900 元")], [900])
 
 
 if __name__ == "__main__":

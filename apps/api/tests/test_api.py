@@ -691,6 +691,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn("用電度數:圖上點選", line["欄位來源"])
         self.assertIn("未稅金額:手動輸入", line["欄位來源"])
         self.assertIn("計費期間:關鍵字", line["欄位來源"])
+        # Notes about values the reviewer picked or typed are dropped.
+        self.assertIn("計費期間以關鍵字", line["需人工檢查"])
+        self.assertNotIn("用電度數以關鍵字", line["需人工檢查"])
 
         fields = load_workbook(self.settings.master_workbook)["Fields"]
         header = [cell.value for cell in fields[1]]

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { isOnPage, newHighlight, newLabel } from "../marks";
-import type { Column, Item, Mark, MarkColors, Row } from "../types";
+import { isOnPage, labelSize, markBox, newHighlight, newId, newLabel } from "../marks";
+import { lineBoxes, linesAt, linesBox, PICK_LABELS, placeLabel, valueFor } from "../pick";
+import type { Box } from "../pick";
+import type { Column, Item, Mark, MarkColors, Row, ValueSource, ViewPage } from "../types";
 import { FieldForm } from "./FieldForm";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
@@ -32,6 +34,26 @@ function withOtherAdjustment(row: Row): Row {
   return { ...row, 其他調整費用: other };
 }
 
+/**
+ * A highlight over a picked value and, when the field has one, its red label
+ * where it hides the least printed text or other marks.
+ */
+function pickMarks(field: string, area: Box, page: ViewPage, label: string | undefined, others: Mark[]): Mark[] {
+  const where = page.bill ? {} : { page: page.page ?? undefined };
+  const pad = 4;
+  const highlight: Mark = {
+    id: newId(), type: "highlight", field, ...where,
+    x: Math.max(0, area.x - pad), y: Math.max(0, area.y - pad), w: area.w + pad * 2, h: area.h + pad * 2,
+  };
+  if (!label) return [highlight];
+  const fontSize = Math.max(28, Math.min(area.h * 1.1, 60));
+  const size = labelSize({ text: label, fontSize });
+  const obstacles = [...lineBoxes(page.lines ?? []), ...others.map(markBox)];
+  const spot = placeLabel(highlight as Box, size, page, obstacles);
+  const text: Mark = { id: newId(), type: "label", field, ...where, text: label, fontSize, x: spot.x, y: spot.y };
+  return [highlight, text];
+}
+
 export function Review({ itemId, user, columns, onChanged, onNext, onNotify, colors: defaultColors }: Props) {
   const [item, setItem] = useState<Item | null>(null);
   const [row, setRow] = useState<Row>({});
@@ -43,11 +65,16 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
   const [message, setMessage] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
+  const [sources, setSources] = useState<Record<string, ValueSource>>({});
+  // The field whose value is being picked on the image.
+  const [picking, setPicking] = useState<string | null>(null);
 
   const load = useCallback((loaded: Item) => {
     setItem(loaded);
     setRow(loaded.row);
     setMarks(loaded.marks);
+    setSources(loaded.sources ?? {});
+    setPicking(null);
     setDirty(false);
   }, []);
 
@@ -84,9 +111,10 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     }
   };
 
-  const save = () => run(() => api.save(itemId, user, row, marks), "Draft saved");
+  const save = () => run(() => api.save(itemId, user, row, marks, sources), "Draft saved");
+  const redetect = () => run(() => api.redetect(itemId), "Looked for the values again with the current keywords");
   const submit = async () => {
-    const result = await run(() => api.submit(itemId, user, row, marks), "Submitted — saved to the Excel files with its evidence PDF");
+    const result = await run(() => api.submit(itemId, user, row, marks, sources), "Submitted — saved to the Excel files with its evidence PDF");
     if (result && !(result.locked_workbooks ?? []).length) {
       onNotify(`${item?.filename ?? "Bill"} submitted — saved to the Excel files with its evidence PDF.`);
       onNext();
@@ -130,6 +158,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
         changeMarks(marks.filter((mark) => mark.id !== selectedId));
         setSelectedId(null);
       }
+      if (event.key === "Escape" && picking) setPicking(null);
       if (event.key === "s" && (event.ctrlKey || event.metaKey) && editable) {
         event.preventDefault();
         void save();
@@ -141,15 +170,48 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
 
   if (!item) return <div className="review empty">{message ? message.text : "Loading…"}</div>;
 
-  const pages = item.pages?.length ? item.pages : [{ page: item.page, width: item.image.width, height: item.image.height, bill: true }];
+  const pages: ViewPage[] = item.pages?.length ? item.pages : [{ page: item.page, width: item.image.width, height: item.image.height, bill: true, lines: [] }];
   const shown = pages[Math.min(pageIndex, pages.length - 1)];
   const page = { width: shown.width, height: shown.height };
   const pageMarks = marks.filter((mark) => isOnPage(mark, shown));
   // Edits from the viewer and panel cover this page only; marks elsewhere stay.
   const changePageMarks = (next: Mark[]) => changeMarks([...marks.filter((mark) => !isOnPage(mark, shown)), ...next]);
   const onShown = <T extends Mark>(mark: T): T => (shown.bill ? mark : { ...mark, page: shown.page ?? undefined });
-  // Field positions are on the bill page.
-  const focusBox = focused && shown.bill ? item.locations[focused]?.box ?? null : null;
+  // A field's position, when it is on the page shown.
+  const location = focused ? item.locations[focused] : undefined;
+  const locationPage = location?.page ?? item.page;
+  const focusBox = location && (shown.bill ? locationPage === item.page : locationPage === shown.page) ? location.box : null;
+  const columnOf = (key: string) => columns.find((column) => column.key === key);
+
+  const setValue = (column: string, value: string | number | null, source: ValueSource) => {
+    setRow((current) => withOtherAdjustment({ ...current, [column]: value }));
+    setSources((current) => ({ ...current, [column]: source }));
+    setDirty(true);
+  };
+
+  // A click, or a dragged box, on the page while picking a field's value.
+  const pick = (box: Box) => {
+    if (!picking) return;
+    const column = picking;
+    const picked = linesAt(shown.lines ?? [], box);
+    const value = valueFor(column, columnOf(column)?.numeric ?? false, picked, box);
+    const area = picked.length ? linesBox(picked) : box.w > 6 && box.h > 6 ? box : null;
+    if (area === null) {
+      setMessage({ kind: "warn", text: "No text there. Click on the value, or drag a box around it." });
+      return;
+    }
+    if (value !== null) setValue(column, value, "pick");
+    const kept = marks.filter((mark) => mark.field !== column);
+    const added = pickMarks(column, area, shown, PICK_LABELS[column], kept.filter((mark) => isOnPage(mark, shown)));
+    changeMarks([...kept, ...added]);
+    setSelectedId(added[0].id);
+    setPicking(null);
+    setMessage(
+      value === null
+        ? { kind: "warn", text: "Could not read a value there — the highlight is added; type the value in the field." }
+        : { kind: "ok", text: `${columnOf(column)?.label ?? column}: ${value} (picked on the image)` },
+    );
+  };
   const pageLabel = item.page ? ` · page ${item.page}` : "";
 
   return (
@@ -167,6 +229,11 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
           </a>
           {editable ? (
             <>
+              {item.kind === "other" && (
+                <button onClick={redetect} disabled={busy} title="Look for the values again with the keywords in Settings (replaces the values and marks)">
+                  Detect again
+                </button>
+              )}
               <button onClick={save} disabled={busy || !dirty}>Save draft</button>
               <button className="primary" onClick={submit} disabled={busy}>Submit</button>
             </>
@@ -214,6 +281,8 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             focusBox={focusBox}
             onSelect={setSelectedId}
             onChange={changePageMarks}
+            picking={picking ? `Click the ${columnOf(picking)?.label ?? picking} on the page, or drag a box around it · Esc to stop` : null}
+            onPick={pick}
           />
         </div>
         <aside className="side">
@@ -238,7 +307,11 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             editable={editable}
             focused={focused}
             onFocus={setFocused}
-            onChange={(column, value) => { setRow((current) => withOtherAdjustment({ ...current, [column]: value })); setDirty(true); }}
+            onChange={setValue}
+            sources={sources}
+            only={item.columns}
+            picking={picking}
+            onPick={editable ? setPicking : undefined}
           />
         </aside>
       </div>

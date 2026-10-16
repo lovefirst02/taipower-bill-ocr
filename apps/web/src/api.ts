@@ -1,4 +1,6 @@
-import type { Column, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Upload } from "./types";
+import type { Column, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Upload, ValueSource } from "./types";
+
+type Sources = Record<string, ValueSource>;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -48,10 +50,11 @@ export const api = {
   items: (user: string) => request<ItemSummary[]>(`/api/items?user=${encodeURIComponent(user)}`),
   item: (id: number) => request<Item>(`/api/items/${id}`),
 
-  save: (id: number, user: string, row: Row, marks: Mark[]) =>
-    request<Item>(`/api/items/${id}`, { method: "PUT", ...json({ user, row, marks }) }),
-  submit: (id: number, user: string, row: Row, marks: Mark[]) =>
-    request<Item>(`/api/items/${id}/submit`, { method: "POST", ...json({ user, row, marks }) }),
+  save: (id: number, user: string, row: Row, marks: Mark[], sources: Sources) =>
+    request<Item>(`/api/items/${id}`, { method: "PUT", ...json({ user, row, marks, sources }) }),
+  submit: (id: number, user: string, row: Row, marks: Mark[], sources: Sources) =>
+    request<Item>(`/api/items/${id}/submit`, { method: "POST", ...json({ user, row, marks, sources }) }),
+  redetect: (id: number) => request<Item>(`/api/items/${id}/redetect`, { method: "POST" }),
   reopen: (id: number, user: string) =>
     request<Item>(`/api/items/${id}/reopen`, { method: "POST", ...json({ user }) }),
   resetMarks: (id: number) => request<Item>(`/api/items/${id}/reset-marks`, { method: "POST" }),

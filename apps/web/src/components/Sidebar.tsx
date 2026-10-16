@@ -153,7 +153,10 @@ export function BillList({ items, selectedId, onSelect, onDelete }: BillListProp
             <li key={item.id} className={item.id === selectedId ? "selected" : ""} onClick={() => onSelect(item.id)}>
               <span className={`dot ${item.status === "submitted" ? "done" : item.needs_review ? "warn" : "ok"}`} aria-hidden />
               <span className="bill-main">
-                <span className="name">{item.filename}{item.page ? ` · p${item.page}` : ""}</span>
+                <span className="name">
+                  {item.filename}{item.page ? ` · p${item.page}` : ""}
+                  {item.kind === "other" && <span className="kind-badge" title="Not a Taipower bill: values found by keyword or filled in by hand">other</span>}
+                </span>
                 <span className="meta">{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}</span>
               </span>
               <button

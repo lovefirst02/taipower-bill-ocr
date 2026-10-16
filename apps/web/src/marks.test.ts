@@ -57,8 +57,8 @@ describe("labels and new marks", () => {
 });
 
 describe("isOnPage", () => {
-  const bill = { page: 1, width: 100, height: 100, bill: true };
-  const back = { page: 2, width: 100, height: 100, bill: false };
+  const bill = { page: 1, width: 100, height: 100, bill: true, lines: [] };
+  const back = { page: 2, width: 100, height: 100, bill: false, lines: [] };
   const mark = { id: "a", type: "highlight" as const, x: 0, y: 0, w: 10, h: 10 };
 
   it("puts marks without a page on the bill page", () => {

@@ -110,6 +110,15 @@ def workbook_dir(output_dir: Path, user: str | None) -> Path:
 def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[Any]:
     row = dict(page["row"] or {})
     submitted = page["status"] == "submitted"
+    if page.get("kind") == documents.OTHER:
+        # Notes about a value found by keyword no longer apply once it was
+        # picked or typed in by the reviewer.
+        sources = page.get("sources") or {}
+        notes = [
+            issue["zh"] for issue in page.get("issues") or []
+            if all(sources.get(column) in (None, "keyword") for column in issue.get("columns") or [])
+        ]
+        row[REVIEW_COLUMN] = "；".join(notes) or None
     if submitted:
         original = row.get(REVIEW_COLUMN)
         row[REVIEW_COLUMN] = f"{REVIEWED}；{original}" if original else REVIEWED

@@ -3,6 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { DEFAULT_COLORS, HIGHLIGHT_OPACITY, LABEL_FONT, labelSize, markColor, moveMark, resizeHighlight, resizeLabel } from "../marks";
 import type { Handle } from "../marks";
 import type { Mark, MarkColors } from "../types";
+import type { Box } from "../pick";
 
 interface Props {
   imageUrl: string;
@@ -17,6 +18,9 @@ interface Props {
   focusBox: [number, number, number, number] | null;
   onSelect: (id: string | null) => void;
   onChange: (marks: Mark[]) => void;
+  /** While set, a click or a dragged box on the page picks a value (instead of editing marks). */
+  picking?: string | null;
+  onPick?: (box: Box) => void;
 }
 
 type Drag =
@@ -25,12 +29,14 @@ type Drag =
 
 const HANDLES: Handle[] = ["nw", "ne", "sw", "se"];
 
-export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_COLORS, selectedId, editable, focusBox, onSelect, onChange }: Props) {
+export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_COLORS, selectedId, editable, focusBox, onSelect, onChange, picking = null, onPick }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1); // 1 = fit to panel width
   const [drag, setDrag] = useState<Drag | null>(null);
   const [draft, setDraft] = useState<Mark[] | null>(null); // marks while dragging
+  const [pickStart, setPickStart] = useState<DOMPoint | null>(null);
+  const [pickBox, setPickBox] = useState<Box | null>(null);
   const shown = draft ?? marks;
   const page = { width, height };
   const handleSize = Math.max(10, width / 120);
@@ -85,6 +91,34 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
 
   const selected = shown.find((mark) => mark.id === selectedId) ?? null;
 
+  const boxFrom = (start: DOMPoint, point: DOMPoint): Box => ({
+    x: Math.min(start.x, point.x),
+    y: Math.min(start.y, point.y),
+    w: Math.abs(point.x - start.x),
+    h: Math.abs(point.y - start.y),
+  });
+  const pickDown = (event: ReactPointerEvent) => {
+    event.stopPropagation();
+    try {
+      (event.target as Element).setPointerCapture(event.pointerId);
+    } catch {
+      // not an active pointer (e.g. a synthetic event); the drag still works inside the page
+    }
+    const start = toImage(event);
+    setPickStart(start);
+    setPickBox({ x: start.x, y: start.y, w: 0, h: 0 });
+  };
+  const pickMove = (event: ReactPointerEvent) => {
+    if (pickStart) setPickBox(boxFrom(pickStart, toImage(event)));
+  };
+  const pickUp = (event: ReactPointerEvent) => {
+    if (!pickStart) return;
+    const box = boxFrom(pickStart, toImage(event));
+    setPickStart(null);
+    setPickBox(null);
+    onPick?.(box);
+  };
+
   return (
     <div className="viewer">
       <div className="viewer-toolbar">
@@ -92,7 +126,9 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
         <span className="zoom-value">{Math.round(zoom * 100)}%</span>
         <button onClick={() => setZoom((value) => Math.min(4, value * 1.25))} aria-label="Zoom in">+</button>
         <button onClick={() => setZoom(1)}>Fit width</button>
-        <span className="hint">{editable ? "Drag marks to move · corners to resize" : "Submitted — reopen to edit"}</span>
+        <span className={picking ? "hint picking" : "hint"}>
+          {picking ?? (editable ? "Drag marks to move · corners to resize" : "Submitted — reopen to edit")}
+        </span>
       </div>
       <div className="viewer-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
         <div className="viewer-page" style={{ width: `${zoom * 100}%` }}>
@@ -144,7 +180,22 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
                 </text>
               ),
             )}
-            {selected && <Selection mark={selected} handleSize={handleSize} editable={editable} onHandle={begin} />}
+            {selected && !picking && <Selection mark={selected} handleSize={handleSize} editable={editable} onHandle={begin} />}
+            {picking && (
+              <rect
+                className="pick-layer"
+                x={0}
+                y={0}
+                width={width}
+                height={height}
+                onPointerDown={pickDown}
+                onPointerMove={pickMove}
+                onPointerUp={pickUp}
+              />
+            )}
+            {pickBox && pickBox.w + pickBox.h > 0 && (
+              <rect className="pick-box" x={pickBox.x} y={pickBox.y} width={pickBox.w} height={pickBox.h} strokeWidth={width / 500} />
+            )}
           </svg>
         </div>
       </div>

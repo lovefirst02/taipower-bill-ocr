@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Column, Issue, Row } from "../types";
+import type { Column, Issue, Row, ValueSource } from "../types";
 
 interface Props {
   columns: Column[];
@@ -10,11 +10,19 @@ interface Props {
   editable: boolean;
   focused: string | null;
   onFocus: (column: string) => void;
-  onChange: (column: string, value: string | number | null) => void;
+  onChange: (column: string, value: string | number | null, source: ValueSource) => void;
+  /** Where each value came from; shown beside the field. */
+  sources?: Record<string, ValueSource>;
+  /** Fields reviewed for this item; all when not given. */
+  only?: string[] | null;
+  /** The field whose value is being picked on the image. */
+  picking?: string | null;
+  onPick?: (column: string | null) => void;
 }
 
 const SECTIONS: { title: string; match: (key: string) => boolean }[] = [
   { title: "Bill", match: (key) => key.startsWith("Billing Period") || key.startsWith("Custom No.") },
+  { title: "Usage kWh 用電度數", match: (key) => key === "用電度數" },
   { title: "Billed kWh 計費度數", match: (key) => key.startsWith("計費度數_") },
   { title: "Transferred kWh 轉供度數", match: (key) => key.startsWith("轉供度數_") },
   {
@@ -22,6 +30,14 @@ const SECTIONS: { title: string; match: (key: string) => boolean }[] = [
     match: (key) => ["基本電費", "流動電費", "功率因數調整費", "預繳費用", "其他調整費用", "稅前應繳總金額", "應繳總金額"].includes(key),
   },
 ];
+
+const SOURCE_LABELS: Record<ValueSource, string> = {
+  taipower: "Taipower bill",
+  keyword: "Found by keyword",
+  pick: "Picked on image",
+  manual: "Typed",
+  alternative: "Other reading",
+};
 
 const format = (value: string | number | null | undefined) => (value === null || value === undefined ? "" : String(value));
 
@@ -65,20 +81,27 @@ function FieldInput({ column, value, readOnly, onFocus, onChange }: {
   );
 }
 
-export function FieldForm({ columns, row, ocrRow, issues, alternatives, editable, focused, onFocus, onChange }: Props) {
+export function FieldForm({
+  columns, row, ocrRow, issues, alternatives, editable, focused, onFocus, onChange,
+  sources = {}, only = null, picking = null, onPick,
+}: Props) {
   const flagged = new Set(issues.flatMap((issue) => issue.columns));
+  const shownColumns = only ? columns.filter((column) => only.includes(column.key)) : columns;
   return (
     <div className="field-form">
-      {SECTIONS.map((section) => (
-        <fieldset key={section.title}>
-          <legend>{section.title}</legend>
-          {columns
-            .filter((column) => section.match(column.key))
-            .map((column) => {
+      {SECTIONS.map((section) => {
+        const inSection = shownColumns.filter((column) => section.match(column.key));
+        if (!inSection.length) return null;
+        return (
+          <fieldset key={section.title}>
+            <legend>{section.title}</legend>
+            {inSection.map((column) => {
               const value = row[column.key];
               const edited = format(value) !== format(ocrRow[column.key]);
               const alternative = alternatives[column.key];
               const invalid = column.numeric && typeof value === "string" && value !== "";
+              const source = sources[column.key];
+              const canEdit = editable && column.editable;
               const classes = [
                 "field",
                 flagged.has(column.key) && !edited ? "flagged" : "",
@@ -86,29 +109,48 @@ export function FieldForm({ columns, row, ocrRow, issues, alternatives, editable
                 invalid ? "invalid" : "",
                 focused === column.key ? "focused" : "",
               ].join(" ");
+              const showAlternative = editable && alternative !== undefined && format(alternative) !== format(value);
               return (
                 <label key={column.key} className={classes}>
                   <span className="field-label">
                     {column.label}
-                    <small>{column.key.replace(/^.*_/, "").replace(/^(Billing Period|Custom No\.) /, "")}</small>
+                    <small>
+                      {column.key.replace(/^.*_/, "").replace(/^(Billing Period|Custom No\.) /, "")}
+                      {source && <span className="source">· {SOURCE_LABELS[source] ?? source}</span>}
+                    </small>
                   </span>
                   <FieldInput
                     column={column}
                     value={value}
-                    readOnly={!editable || !column.editable}
+                    readOnly={!canEdit}
                     onFocus={() => onFocus(column.key)}
-                    onChange={(next) => onChange(column.key, next)}
+                    onChange={(next) => onChange(column.key, next, "manual")}
                   />
-                  {editable && alternative !== undefined && format(alternative) !== format(value) && (
-                    <button type="button" className="alt" onClick={() => onChange(column.key, alternative)}>
-                      Use {format(alternative)}
-                    </button>
-                  )}
+                  {(canEdit && onPick) || showAlternative ? (
+                    <span className="field-actions">
+                      {canEdit && onPick && (
+                        <button
+                          type="button"
+                          className={picking === column.key ? "pick active" : "pick"}
+                          title="Click the value on the page (or drag a box around it) to fill this field and mark it"
+                          onClick={(event) => { event.preventDefault(); onPick(picking === column.key ? null : column.key); }}
+                        >
+                          {picking === column.key ? "Picking… (Esc to stop)" : "Pick on image"}
+                        </button>
+                      )}
+                      {showAlternative && (
+                        <button type="button" className="alt" onClick={() => onChange(column.key, alternative, "alternative")}>
+                          Use {format(alternative)}
+                        </button>
+                      )}
+                    </span>
+                  ) : null}
                 </label>
               );
             })}
-        </fieldset>
-      ))}
+          </fieldset>
+        );
+      })}
     </div>
   );
 }
