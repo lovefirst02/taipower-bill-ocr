@@ -3,7 +3,7 @@ import { api } from "../api";
 import { isOnPage, labelSize, markBox, newHighlight, newId, newLabel } from "../marks";
 import { lineBoxes, linesAt, linesBox, PICK_LABELS, placeLabel, valueFor } from "../pick";
 import type { Box } from "../pick";
-import type { Column, Item, Mark, MarkColors, Row, ValueSource, ViewPage } from "../types";
+import type { Column, Issue, Item, Mark, MarkColors, Row, ValueSource, ViewPage } from "../types";
 import { FieldForm } from "./FieldForm";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
@@ -38,8 +38,8 @@ function withOtherAdjustment(row: Row): Row {
  * A highlight over a picked value and, when the field has one, its red label
  * where it hides the least printed text or other marks.
  */
-function pickMarks(field: string, area: Box, page: ViewPage, label: string | undefined, others: Mark[]): Mark[] {
-  const where = page.bill ? {} : { page: page.page ?? undefined };
+function pickMarks(field: string | undefined, area: Box, page: ViewPage, label: string | undefined, others: Mark[]): Mark[] {
+  const where = { ...(page.bill ? {} : { page: page.page ?? undefined }), ...(field ? {} : { group: newId() }) };
   const pad = 4;
   const highlight: Mark = {
     id: newId(), type: "highlight", field, ...where,
@@ -68,13 +68,26 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
   const [sources, setSources] = useState<Record<string, ValueSource>>({});
   // The field whose value is being picked on the image.
   const [picking, setPicking] = useState<string | null>(null);
+  // The tag being placed on the image (a highlight and its red label).
+  const [tagging, setTagging] = useState<string | null>(null);
+  const [tags, setTags] = useState<{ mark_tags: string[]; defaults: string[] }>({ mark_tags: [], defaults: [] });
+  // Warnings still shown; the reviewer can clear them.
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [notes, setNotes] = useState<string[]>([]);
+
+  useEffect(() => {
+    api.tags(user).then(setTags).catch(() => undefined);
+  }, [user]);
 
   const load = useCallback((loaded: Item) => {
     setItem(loaded);
     setRow(loaded.row);
     setMarks(loaded.marks);
     setSources(loaded.sources ?? {});
+    setIssues(loaded.issues ?? []);
+    setNotes(loaded.mark_notes ?? []);
     setPicking(null);
+    setTagging(null);
     setDirty(false);
   }, []);
 
@@ -117,10 +130,11 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     }
   };
 
-  const save = () => run(() => api.save(itemId, user, row, marks, sources), "Draft saved");
+  const kept = { issues, mark_notes: notes };
+  const save = () => run(() => api.save(itemId, user, row, marks, sources, kept), "Draft saved");
   const redetect = () => run(() => api.redetect(itemId), "Looked for the values again with the current keywords");
   const submit = async () => {
-    const result = await run(() => api.submit(itemId, user, row, marks, sources), "Submitted — saved to the Excel files with its evidence PDF");
+    const result = await run(() => api.submit(itemId, user, row, marks, sources, kept), "Submitted — saved to the Excel files with its evidence PDF");
     if (result && !(result.locked_workbooks ?? []).length) {
       onNotify(`${item?.filename ?? "Bill"} submitted — saved to the Excel files with its evidence PDF.`);
       onNext();
@@ -138,6 +152,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
       const result = await api.resetMarks(itemId);
       setItem((current) => (current ? { ...current, marks: result.marks, mark_notes: result.mark_notes } : current));
       setMarks(result.marks);
+      setNotes(result.mark_notes ?? []);
       setSelectedId(null);
       setMessage({ kind: "ok", text: "Marks reset to the OCR positions" });
     } catch (error) {
@@ -164,7 +179,10 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
         changeMarks(marks.filter((mark) => mark.id !== selectedId));
         setSelectedId(null);
       }
-      if (event.key === "Escape" && picking) setPicking(null);
+      if (event.key === "Escape" && (picking || tagging)) {
+        setPicking(null);
+        setTagging(null);
+      }
       if (event.key === "s" && (event.ctrlKey || event.metaKey) && editable) {
         event.preventDefault();
         void save();
@@ -195,8 +213,51 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     setDirty(true);
   };
 
+  const dismissIssue = (issue?: Issue) => {
+    setIssues((current) => (issue ? current.filter((other) => other.en !== issue.en) : []));
+    setDirty(true);
+  };
+  const dismissNote = (note?: string) => {
+    setNotes((current) => (note ? current.filter((other) => other !== note) : []));
+    setDirty(true);
+  };
+  const startPicking = (column: string | null) => {
+    setTagging(null);
+    setPicking(column);
+  };
+  const startTagging = (tag: string | null) => {
+    setPicking(null);
+    setTagging(tag);
+  };
+  const saveTags = async (next: string[] | null) => {
+    try {
+      setTags(await api.saveTags(user, next));
+    } catch (error) {
+      setMessage({ kind: "error", text: (error as Error).message });
+    }
+  };
+
+  // A tag placed on the page: a highlight over what was picked and the tag beside it.
+  const placeTag = (tag: string, box: Box) => {
+    const picked = linesAt(shown.lines ?? [], box);
+    const area = picked.length ? linesBox(picked) : box.w > 6 && box.h > 6 ? box : null;
+    if (area === null) {
+      setMessage({ kind: "warn", text: "No text there. Click on the value, or drag a box around it." });
+      return;
+    }
+    // A tag naming a field's evidence (e.g. "Billing period") replaces that field's marks.
+    const field = Object.entries(PICK_LABELS).find(([, label]) => label === tag)?.[0];
+    const keptMarks = field ? marks.filter((mark) => mark.field !== field) : marks;
+    const added = pickMarks(field, area, shown, tag, keptMarks.filter((mark) => isOnPage(mark, shown)));
+    changeMarks([...keptMarks, ...added]);
+    setSelectedId(added[0].id);
+    setTagging(null);
+    setMessage({ kind: "ok", text: `“${tag}” added` });
+  };
+
   // A click, or a dragged box, on the page while picking a field's value.
   const pick = (box: Box) => {
+    if (tagging) return placeTag(tagging, box);
     if (!picking) return;
     const column = picking;
     const picked = linesAt(shown.lines ?? [], box);
@@ -249,9 +310,19 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
         </div>
       </header>
       {message && <div className={`message ${message.kind}`}>{message.text}</div>}
-      {item.issues.length > 0 && editable && (
+      {issues.length > 0 && editable && (
         <ul className="issues">
-          {item.issues.map((issue) => <li key={issue.en}>{issue.en}</li>)}
+          {issues.map((issue) => (
+            <li key={issue.en}>
+              <span>{issue.en}</span>
+              <button type="button" className="icon" aria-label="Clear this warning" title="Clear this warning" onClick={() => dismissIssue(issue)}>✕</button>
+            </li>
+          ))}
+          {issues.length > 1 && (
+            <li className="issues-actions">
+              <button type="button" className="link clear-all" onClick={() => dismissIssue()}>Clear all warnings</button>
+            </li>
+          )}
         </ul>
       )}
       <div className="review-body">
@@ -287,7 +358,13 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             focusBox={focusBox}
             onSelect={setSelectedId}
             onChange={changePageMarks}
-            picking={picking ? `Click the ${columnOf(picking)?.label ?? picking} on the page, or drag a box around it · Esc to stop` : null}
+            picking={
+              tagging
+                ? `Click the value for “${tagging}” on the page, or drag a box around it · Esc to stop`
+                : picking
+                  ? `Click the ${columnOf(picking)?.label ?? picking} on the page, or drag a box around it · Esc to stop`
+                  : null
+            }
             onPick={pick}
           />
         </div>
@@ -295,7 +372,13 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
           <MarksPanel
             marks={pageMarks}
             colors={defaultColors ?? item.colors}
-            notes={item.mark_notes}
+            notes={notes}
+            onDismissNote={dismissNote}
+            tags={tags.mark_tags}
+            defaultTags={tags.defaults}
+            tagging={tagging}
+            onTag={startTagging}
+            onSaveTags={saveTags}
             selectedId={selectedId}
             editable={editable}
             onSelect={setSelectedId}
@@ -308,7 +391,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             columns={columns}
             row={row}
             ocrRow={item.ocr_row}
-            issues={item.issues}
+            issues={issues}
             alternatives={item.alternatives}
             editable={editable}
             focused={focused}
@@ -316,7 +399,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             onChange={setValue}
             sources={sources}
             picking={picking}
-            onPick={editable ? setPicking : undefined}
+            onPick={editable ? startPicking : undefined}
           />
         </aside>
       </div>

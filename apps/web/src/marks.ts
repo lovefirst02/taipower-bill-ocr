@@ -90,7 +90,6 @@ export function newLabel(page: Bounds, text: string, around?: { x: number; y: nu
   };
 }
 
-export const EVIDENCE_LABELS = ["Billing period", "Grey Electricity Cost", "Electricity Usage (kWh)"];
 
 export const DEFAULT_COLORS: MarkColors = { highlight: "#ffeb3b", label: "#d32f2f" };
 // Highlights are drawn see-through, as in the evidence PDF.

@@ -45,6 +45,14 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
   const [draft, setDraft] = useState<Mark[] | null>(null); // marks while dragging
   const [pickStart, setPickStart] = useState<DOMPoint | null>(null);
   const [pickBox, setPickBox] = useState<Box | null>(null);
+  // A red label being edited in place (double-click it).
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const commitEdit = () => {
+    if (!editing) return;
+    const text = editing.text.trim();
+    if (text) onChange(marks.map((mark) => (mark.id === editing.id && mark.type === "label" ? { ...mark, text } : mark)));
+    setEditing(null);
+  };
   const shown = draft ?? marks;
   const page = { width, height };
   const handleSize = Math.max(10, width / 120);
@@ -275,19 +283,48 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
                   onPointerDown={(event) => begin(event, mark)}
                 />
               ) : (
-                <text
-                  key={mark.id}
-                  className="pen"
-                  fill={markColor(mark, colors)}
-                  x={mark.x}
-                  y={mark.y + mark.fontSize * 0.85}
-                  fontSize={mark.fontSize}
-                  fontFamily={LABEL_FONT}
-                  fontWeight={700}
-                  onPointerDown={(event) => begin(event, mark)}
-                >
-                  {mark.text}
-                </text>
+                editing?.id === mark.id ? (
+                  <foreignObject
+                    key={mark.id}
+                    x={mark.x - mark.fontSize * 0.2}
+                    y={mark.y - mark.fontSize * 0.25}
+                    width={Math.min(width - mark.x, Math.max(labelSize({ text: editing.text, fontSize: mark.fontSize }).w + mark.fontSize * 3, mark.fontSize * 8))}
+                    height={mark.fontSize * 1.7}
+                  >
+                    <input
+                      className="label-inline"
+                      autoFocus
+                      value={editing.text}
+                      style={{ fontSize: mark.fontSize, color: markColor(mark, colors), fontFamily: LABEL_FONT }}
+                      onChange={(event) => setEditing({ id: mark.id, text: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") commitEdit();
+                        if (event.key === "Escape") setEditing(null);
+                        event.stopPropagation();
+                      }}
+                      onBlur={commitEdit}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    />
+                  </foreignObject>
+                ) : (
+                  <text
+                    key={mark.id}
+                    className="pen"
+                    fill={markColor(mark, colors)}
+                    x={mark.x}
+                    y={mark.y + mark.fontSize * 0.85}
+                    fontSize={mark.fontSize}
+                    fontFamily={LABEL_FONT}
+                    fontWeight={700}
+                    onPointerDown={(event) => begin(event, mark)}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      if (editable && !picking) setEditing({ id: mark.id, text: mark.text });
+                    }}
+                  >
+                    {mark.text}
+                  </text>
+                )
               ),
             )}
             {selected && !picking && <Selection mark={selected} handleSize={handleSize} editable={editable} onHandle={begin} />}

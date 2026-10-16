@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS pages (
 );
 CREATE INDEX IF NOT EXISTS pages_upload ON pages(upload_id);
 CREATE INDEX IF NOT EXISTS uploads_user ON uploads(user);
+CREATE TABLE IF NOT EXISTS preferences (
+    user TEXT NOT NULL,
+    key TEXT NOT NULL,               -- e.g. mark_tags: the user's own evidence tags
+    value_json TEXT NOT NULL,
+    PRIMARY KEY (user, key)
+);
 """
 
 _JSON_COLUMNS = {
@@ -144,6 +150,21 @@ class Store:
     def set_upload(self, upload_id: int, **values: Any) -> None:
         assignments = ", ".join(f"{key} = :{key}" for key in values)
         self._execute(f"UPDATE uploads SET {assignments} WHERE id = :id", {**values, "id": upload_id})
+
+    # ------------------------------------------------------------ preferences
+    def preference(self, user: str, key: str) -> Any:
+        rows = self._query("SELECT value_json FROM preferences WHERE user = ? AND key = ?", (user, key))
+        return json.loads(rows[0]["value_json"]) if rows else None
+
+    def set_preference(self, user: str, key: str, value: Any) -> None:
+        self._execute(
+            "INSERT INTO preferences (user, key, value_json) VALUES (?, ?, ?) "
+            "ON CONFLICT(user, key) DO UPDATE SET value_json = excluded.value_json",
+            (user, key, json.dumps(value, ensure_ascii=False)),
+        )
+
+    def clear_preference(self, user: str, key: str) -> None:
+        self._execute("DELETE FROM preferences WHERE user = ? AND key = ?", (user, key))
 
     # ------------------------------------------------------------------ pages
     def add_page(self, upload_id: int, **values: Any) -> int:

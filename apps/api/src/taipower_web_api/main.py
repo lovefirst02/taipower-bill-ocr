@@ -22,6 +22,7 @@ from taipower_bill_ocr.excel_export import (
     COLUMN_LABELS_EN,
     COLUMNS,
     OTHER_ADJUSTMENT_INPUTS,
+    REVIEW_COLUMN,
     recompute_other_adjustment,
 )
 
@@ -43,6 +44,8 @@ from .store import Store, now
 from .worker import OcrWorker, usage_marks_for
 
 TEXT_COLUMNS = {"Billing Period 計費期間", "Custom No. 電號"}
+# Evidence tags offered until a user sets their own.
+DEFAULT_MARK_TAGS = ("Billing period", "Grey Electricity Cost", "Electricity Usage (kWh)")
 # The 17 columns plus the period's total usage (from the bill's back page,
 # or from any other kind of document).
 API_COLUMNS = [*COLUMNS, documents.USAGE]
@@ -74,6 +77,15 @@ class ItemUpdate(BaseModel):
     marks: list[Mark] | None = None
     # Where each value came from (see documents.SOURCES).
     sources: dict[str, str] | None = None
+    # Warnings the reviewer kept; the others were cleared by hand.
+    issues: list[dict[str, Any]] | None = None
+    mark_notes: list[str] | None = None
+
+
+class Preferences(BaseModel):
+    user: str
+    # The user's evidence tags (a highlight and its red label); None: the defaults.
+    mark_tags: list[str] | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -292,6 +304,29 @@ def create_app(
             deleted.append(page_id)
         return {"deleted": deleted, "hidden": hidden}
 
+    # ----------------------------------------------------------- preferences
+    def tags_of(user: str) -> dict[str, Any]:
+        tags = store.preference(user, "mark_tags")
+        return {"mark_tags": tags if tags is not None else list(DEFAULT_MARK_TAGS), "defaults": list(DEFAULT_MARK_TAGS)}
+
+    @app.get("/api/preferences")
+    def preferences(user: str) -> dict[str, Any]:
+        return tags_of(_clean_user(user))
+
+    @app.put("/api/preferences")
+    def save_preferences(update: Preferences) -> dict[str, Any]:
+        user = _clean_user(update.user)
+        if update.mark_tags is None:
+            store.clear_preference(user, "mark_tags")
+        else:
+            tags: list[str] = []
+            for tag in update.mark_tags:
+                tag = tag.strip()
+                if tag and tag not in tags:
+                    tags.append(tag[:60])
+            store.set_preference(user, "mark_tags", tags[:30])
+        return tags_of(user)
+
     @app.get("/api/uploads")
     def uploads(user: str) -> list[dict[str, Any]]:
         return [
@@ -378,6 +413,16 @@ def create_app(
             values["row"] = row
         if update.marks is not None:
             values["marks"] = [mark.model_dump(exclude_none=True) for mark in update.marks]
+        if update.issues is not None:
+            # Only warnings the item has can be kept: clearing never adds one.
+            kept = {issue.get("en") for issue in update.issues}
+            issues = [issue for issue in page["issues"] or [] if issue["en"] in kept]
+            values["issues"] = issues
+            row = dict(values.get("row") or page["row"] or {})
+            row[REVIEW_COLUMN] = "；".join(issue["zh"] for issue in issues) or None
+            values["row"] = row
+        if update.mark_notes is not None:
+            values["mark_notes"] = [note for note in page["mark_notes"] or [] if note in set(update.mark_notes)]
         if update.sources is not None:
             sources = dict(page.get("sources") or {})
             for column, source in update.sources.items():

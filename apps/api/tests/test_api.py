@@ -757,6 +757,31 @@ class ApiTests(unittest.TestCase):
         self.upload("Amy", "jan.png")
         self.assertEqual(self.client.post(f"/api/items/{self.first_item('Amy')['id']}/redetect").status_code, 409)
 
+    def test_warnings_can_be_cleared_by_hand(self):
+        bill = official_sample_bill()
+        del bill["charge_info"]["basic_charge_twd"]  # a warning; the usage note is a mark note
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: bill):
+            self.upload("Amy", "jan.png")
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertTrue(detail["issues"] and detail["mark_notes"])
+        kept = detail["issues"][1:]
+        saved = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "issues": kept, "mark_notes": []}).json()
+        self.assertEqual([issue["en"] for issue in saved["issues"]], [issue["en"] for issue in kept])
+        self.assertEqual(saved["mark_notes"], [])
+        self.assertEqual(saved["row"]["需人工檢查"], "；".join(issue["zh"] for issue in kept) or None)
+        # Clearing never brings a warning back or adds one.
+        again = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "issues": detail["issues"] + [{"en": "made up", "zh": "x"}]}).json()
+        self.assertEqual(len(again["issues"]), len(kept))
+
+    def test_each_user_keeps_their_own_tags(self):
+        defaults = self.client.get("/api/preferences", params={"user": "Amy"}).json()
+        self.assertEqual(defaults["mark_tags"], ["Billing period", "Grey Electricity Cost", "Electricity Usage (kWh)"])
+        saved = self.client.put("/api/preferences", json={"user": "Amy", "mark_tags": [" Meter No. ", "Billing period", "Meter No.", ""]}).json()
+        self.assertEqual(saved["mark_tags"], ["Meter No.", "Billing period"])
+        self.assertEqual(self.client.get("/api/preferences", params={"user": "Ben"}).json()["mark_tags"], defaults["mark_tags"])
+        reset = self.client.put("/api/preferences", json={"user": "Amy", "mark_tags": None}).json()
+        self.assertEqual(reset["mark_tags"], defaults["mark_tags"])
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
