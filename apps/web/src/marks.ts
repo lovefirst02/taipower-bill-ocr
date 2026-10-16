@@ -15,8 +15,26 @@ export interface Bounds {
 const clamp = (value: number, low: number, high: number) =>
   Math.min(Math.max(value, low), Math.max(low, high));
 
-/** Approximate size of a red label (the server measures the real font). */
+let measuring: CanvasRenderingContext2D | null | undefined;
+
+/** The width of bold label text in the page's font, when a browser can measure it. */
+function measuredWidth(text: string, fontSize: number): number | null {
+  if (measuring === undefined) {
+    measuring = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  }
+  if (!measuring) return null;
+  measuring.font = `700 ${fontSize}px ${LABEL_FONT}`;
+  const width = measuring.measureText(text).width;
+  return width > 0 ? width : null;
+}
+
+/**
+ * Size of a red label: measured in the browser (as it is drawn on screen),
+ * otherwise estimated. The server measures the real font for the evidence.
+ */
 export function labelSize(label: Pick<Label, "text" | "fontSize">): { w: number; h: number } {
+  const measured = measuredWidth(label.text, label.fontSize);
+  if (measured !== null) return { w: measured, h: label.fontSize * 1.1 };
   // Bold Latin glyphs are about 0.6 em wide; Chinese characters a full em.
   const ems = [...label.text].reduce((sum, char) => sum + (/[㐀-鿿]/.test(char) ? 1 : 0.6), 0);
   return { w: ems * label.fontSize, h: label.fontSize * 1.1 };
@@ -54,6 +72,28 @@ export function resizeHighlight(mark: Highlight, handle: Handle, dx: number, dy:
 /** Grow or shrink a label's text from its bottom-right corner. */
 export function resizeLabel(mark: Label, dy: number): Label {
   return { ...mark, fontSize: clamp(mark.fontSize + dy, 12, 200) };
+}
+
+/**
+ * Scale a label by dragging one corner of its box; the opposite corner stays
+ * put. Dragging outwards (in either direction) grows the text evenly.
+ */
+export function resizeLabelCorner(mark: Label, handle: Handle, dx: number, dy: number): Label {
+  const { w, h } = labelSize(mark);
+  const sx = handle.includes("e") ? 1 : -1;
+  const sy = handle.includes("s") ? 1 : -1;
+  // How much the box grew along the drag, as an average of both directions.
+  const scale = ((w + sx * dx) / w + (h + sy * dy) / h) / 2;
+  const fontSize = clamp(mark.fontSize * scale, 12, 200);
+  const next = labelSize({ text: mark.text, fontSize });
+  const right = mark.x + w;
+  const bottom = mark.y + h;
+  return {
+    ...mark,
+    fontSize,
+    x: handle.includes("w") ? right - next.w : mark.x,
+    y: handle.includes("n") ? bottom - next.h : mark.y,
+  };
 }
 
 let counter = 0;

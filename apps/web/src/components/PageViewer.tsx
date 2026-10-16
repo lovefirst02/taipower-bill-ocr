@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { DEFAULT_COLORS, HIGHLIGHT_OPACITY, LABEL_FONT, labelSize, markColor, moveMark, resizeHighlight, resizeLabel } from "../marks";
+import { DEFAULT_COLORS, HIGHLIGHT_OPACITY, LABEL_FONT, labelSize, markColor, moveMark, resizeHighlight, resizeLabelCorner } from "../marks";
 import type { Handle } from "../marks";
 import type { Mark, MarkColors } from "../types";
 import type { Box } from "../pick";
@@ -55,7 +55,22 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
   };
   const shown = draft ?? marks;
   const page = { width, height };
-  const handleSize = Math.max(10, width / 120);
+  // Handles keep the same size on screen at any zoom (about 12 px).
+  const [screenScale, setScreenScale] = useState(1);
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const measure = () => {
+      const rendered = svg.getBoundingClientRect().width;
+      if (rendered) setScreenScale(rendered / width);
+    };
+    measure();
+    // Zoom, a resized window or panel: the page's size on screen changes.
+    const observer = new ResizeObserver(measure);
+    if (svg.parentElement) observer.observe(svg.parentElement);
+    return () => observer.disconnect();
+  }, [width, zoom]);
+  const handleSize = 12 / Math.max(screenScale, 0.05);
 
   // Bring the focused field into view.
   useEffect(() => {
@@ -175,7 +190,7 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
     let changed: Mark;
     if (drag.kind === "move") changed = moveMark(drag.original, dx, dy, page);
     else if (drag.original.type === "highlight") changed = resizeHighlight(drag.original, drag.handle, dx, dy, page);
-    else changed = resizeLabel(drag.original, dy);
+    else changed = resizeLabelCorner(drag.original, drag.handle, dx, dy);
     setDraft(marks.map((mark) => (mark.id === drag.id ? changed : mark)));
   };
 
@@ -368,8 +383,8 @@ function Selection({
     sw: [box.x, box.y + box.h],
     se: [box.x + box.w, box.y + box.h],
   };
-  // Labels scale from one corner; highlights from all four.
-  const handles = mark.type === "highlight" ? HANDLES : (["se"] as Handle[]);
+  // Both highlights and labels scale from any of their four corners.
+  const handles = HANDLES;
   return (
     <g>
       <rect className="selection" x={box.x} y={box.y} width={box.w} height={box.h} strokeWidth={handleSize / 4} />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOnPage, labelSize, markColor, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel } from "./marks";
+import { isOnPage, labelSize, markColor, moveMark, newHighlight, newLabel, resizeHighlight, resizeLabel, resizeLabelCorner } from "./marks";
 import type { Highlight, Label } from "./types";
 
 const page = { width: 1654, height: 2339 };
@@ -41,6 +41,23 @@ describe("labels and new marks", () => {
   it("changes the label font size within limits", () => {
     expect(resizeLabel(label, 4).fontSize).toBe(50);
     expect(resizeLabel(label, -500).fontSize).toBe(12);
+  });
+
+  it("scales a label from any corner, keeping the opposite one in place", () => {
+    const box = labelSize(label);
+    const bigger = resizeLabelCorner(label, "se", box.w * 0.5, box.h * 0.5);
+    expect(bigger.fontSize).toBeCloseTo(label.fontSize * 1.5);
+    expect([bigger.x, bigger.y]).toEqual([label.x, label.y]);
+
+    const fromTopLeft = resizeLabelCorner(label, "nw", -box.w * 0.5, -box.h * 0.5);
+    const grown = labelSize(fromTopLeft);
+    expect(fromTopLeft.fontSize).toBeCloseTo(label.fontSize * 1.5);
+    expect(fromTopLeft.x + grown.w).toBeCloseTo(label.x + box.w); // right edge stays
+    expect(fromTopLeft.y + grown.h).toBeCloseTo(label.y + box.h); // bottom edge stays
+
+    // A sideways drag alone also resizes it.
+    expect(resizeLabelCorner(label, "ne", box.w, 0).fontSize).toBeGreaterThan(label.fontSize);
+    expect(resizeLabelCorner(label, "sw", box.w * 5, 0).fontSize).toBe(12);
   });
 
   it("creates new marks inside the page", () => {
