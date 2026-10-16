@@ -170,11 +170,16 @@ def create_app(
         return evidence.with_colors(marks, settings.highlight_color, settings.label_color)
 
     def build_evidence_pdf(page: dict[str, Any]) -> bytes:
-        """The bill page, then each back page that has marks."""
+        """The bill page, then each back page that has marks.
+
+        Another kind of document keeps every page: any of them (terms, a
+        signature, the payment details) may be part of the evidence.
+        """
+        whole = page.get("kind") == documents.OTHER
         pages = []
         for shown in view_pages(page):
             marks = marks_on(page, shown)
-            if shown["id"] == page["id"] or marks:
+            if whole or shown["id"] == page["id"] or marks:
                 pages.append((shown["page_number"], page_image(shown), marks))
         return evidence.evidence_pdf(Path(page["path"]), pages, settings.dpi)
 

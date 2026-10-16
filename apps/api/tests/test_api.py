@@ -717,6 +717,24 @@ class ApiTests(unittest.TestCase):
         line = dict(zip(header, [cell.value for cell in report[2]]))
         self.assertEqual((line["文件類型"], line["用電度數"], line["欄位來源"]), ("台電帳單", 15000, "其他:台電帳單辨識"))
 
+    def test_evidence_of_another_document_keeps_every_page(self):
+        from pypdf import PdfReader
+
+        def extract(self_, path, page):
+            return landlord_statement() if page == 1 else BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+
+        with mock.patch.object(FakeExtractor, "extract", extract):
+            self.client.post("/api/uploads", data={"user": "Amy"}, files=[("files", ("notice.pdf", three_page_pdf(3), "application/pdf"))])
+            self.app.state.worker.wait_idle(10)
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertEqual(detail["kind"], "other")
+        self.assertEqual(len(detail["pages"]), 3)
+        self.assertFalse(any(mark.get("page") for mark in detail["marks"]))  # all marks on page 1
+        content = self.client.get(f"/api/items/{detail['id']}/evidence.pdf").content
+        self.assertEqual(len(PdfReader(io.BytesIO(content)).pages), 3)
+        saved = Path(self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy"}).json()["evidence_file"])
+        self.assertEqual(len(PdfReader(str(saved)).pages), 3)
+
     def test_redetect_is_only_for_other_documents(self):
         self.upload("Amy", "jan.png")
         self.assertEqual(self.client.post(f"/api/items/{self.first_item('Amy')['id']}/redetect").status_code, 409)
