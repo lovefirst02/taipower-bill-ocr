@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { DEFAULT_COLORS, HIGHLIGHT_OPACITY, LABEL_FONT, labelSize, markColor, moveMark, resizeHighlight, resizeLabel } from "../marks";
 import type { Handle } from "../marks";
@@ -33,6 +33,10 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
   const svgRef = useRef<SVGSVGElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1); // 1 = fit to panel width
+  // Dragging the page itself (not a mark) moves the view, like a hand tool.
+  const [pan, setPan] = useState<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  // The point kept under the cursor while zooming with Ctrl + wheel.
+  const zoomAnchor = useRef<{ x: number; y: number; px: number; py: number; ratio: number } | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [draft, setDraft] = useState<Mark[] | null>(null); // marks while dragging
   const [pickStart, setPickStart] = useState<DOMPoint | null>(null);
@@ -54,6 +58,59 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
     });
   }, [focusBox, width]);
 
+  // Ctrl + wheel zooms around the cursor (a native listener: React's is passive).
+  useEffect(() => {
+    const panel = scrollRef.current;
+    if (!panel) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const rect = panel.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      setZoom((current) => {
+        const next = Math.min(4, Math.max(0.5, current * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
+        zoomAnchor.current = { x, y, px: panel.scrollLeft + x, py: panel.scrollTop + y, ratio: next / current };
+        return next;
+      });
+    };
+    panel.addEventListener("wheel", onWheel, { passive: false });
+    return () => panel.removeEventListener("wheel", onWheel);
+  }, []);
+
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current;
+    const panel = scrollRef.current;
+    if (!anchor || !panel) return;
+    zoomAnchor.current = null;
+    panel.scrollLeft = anchor.px * anchor.ratio - anchor.x;
+    panel.scrollTop = anchor.py * anchor.ratio - anchor.y;
+  }, [zoom]);
+
+  const panStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !scrollRef.current) return;
+    const panel = scrollRef.current;
+    try {
+      panel.setPointerCapture(event.pointerId);
+    } catch {
+      // not an active pointer
+    }
+    setPan({ x: event.clientX, y: event.clientY, left: panel.scrollLeft, top: panel.scrollTop, moved: false });
+  };
+  const panMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pan || !scrollRef.current) return;
+    const dx = event.clientX - pan.x;
+    const dy = event.clientY - pan.y;
+    scrollRef.current.scrollLeft = pan.left - dx;
+    scrollRef.current.scrollTop = pan.top - dy;
+    if (!pan.moved && Math.abs(dx) + Math.abs(dy) > 3) setPan({ ...pan, moved: true });
+  };
+  const panEnd = () => {
+    // A click without dragging still clears the selection.
+    if (pan && !pan.moved) onSelect(null);
+    setPan(null);
+  };
+
   const toImage = (event: ReactPointerEvent): DOMPoint => {
     const svg = svgRef.current!;
     const point = svg.createSVGPoint();
@@ -66,7 +123,11 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
     event.stopPropagation();
     onSelect(mark.id);
     if (!editable) return;
-    (event.target as Element).setPointerCapture(event.pointerId);
+    try {
+      (event.target as Element).setPointerCapture(event.pointerId);
+    } catch {
+      // not an active pointer
+    }
     const start = toImage(event);
     setDrag(handle ? { kind: "resize", id: mark.id, handle, start, original: mark } : { kind: "move", id: mark.id, start, original: mark });
   };
@@ -127,10 +188,17 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
         <button onClick={() => setZoom((value) => Math.min(4, value * 1.25))} aria-label="Zoom in">+</button>
         <button onClick={() => setZoom(1)}>Fit width</button>
         <span className={picking ? "hint picking" : "hint"}>
-          {picking ?? (editable ? "Drag marks to move · corners to resize" : "Submitted — reopen to edit")}
+          {picking ?? (editable ? "Drag marks to move · drag the page to pan · Ctrl + wheel to zoom" : "Submitted — reopen to edit · drag to pan · Ctrl + wheel to zoom")}
         </span>
       </div>
-      <div className="viewer-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
+      <div
+        className={pan?.moved ? "viewer-scroll panning" : "viewer-scroll"}
+        ref={scrollRef}
+        onPointerDown={panStart}
+        onPointerMove={panMove}
+        onPointerUp={panEnd}
+        onPointerCancel={() => setPan(null)}
+      >
         <div className="viewer-page" style={{ width: `${zoom * 100}%` }}>
           <img src={imageUrl} alt="Bill page" draggable={false} />
           <svg

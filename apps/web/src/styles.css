@@ -141,7 +141,9 @@ main { flex: 1; min-width: 0; display: flex; }
 .viewer-toolbar button { padding: 3px 9px; }
 .zoom-value { width: 44px; text-align: center; font-size: 12px; color: var(--muted); }
 .hint { margin-left: auto; font-size: 12px; color: var(--muted); }
-.viewer-scroll { flex: 1; overflow: auto; background: #d8dbe0; }
+.viewer-scroll { flex: 1; overflow: auto; background: #d8dbe0; cursor: grab; }
+.viewer-scroll.panning, .viewer-scroll.panning * { cursor: grabbing !important; }
+.viewer-page img { -webkit-user-drag: none; }
 .viewer-page { position: relative; margin: 0 auto; }
 .viewer-page img { display: block; width: 100%; user-select: none; }
 .marks { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
