@@ -245,11 +245,10 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
       setMessage({ kind: "warn", text: "No text there. Click on the value, or drag a box around it." });
       return;
     }
-    // A tag naming a field's evidence (e.g. "Billing period") replaces that field's marks.
-    const field = Object.entries(PICK_LABELS).find(([, label]) => label === tag)?.[0];
-    const keptMarks = field ? marks.filter((mark) => mark.field !== field) : marks;
-    const added = pickMarks(field, area, shown, tag, keptMarks.filter((mark) => isOnPage(mark, shown)));
-    changeMarks([...keptMarks, ...added]);
+    // Always added, never replacing anything: a tag may appear as often as needed,
+    // and its marks belong to no field, so picking a field's value leaves them.
+    const added = pickMarks(undefined, area, shown, tag, marks.filter((mark) => isOnPage(mark, shown)));
+    changeMarks([...marks, ...added]);
     setSelectedId(added[0].id);
     setTagging(null);
     setMessage({ kind: "ok", text: `“${tag}” added` });
