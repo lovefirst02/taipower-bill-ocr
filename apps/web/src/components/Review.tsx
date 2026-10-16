@@ -309,7 +309,6 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             onFocus={setFocused}
             onChange={setValue}
             sources={sources}
-            only={item.columns}
             picking={picking}
             onPick={editable ? setPicking : undefined}
           />

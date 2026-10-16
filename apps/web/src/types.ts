@@ -110,8 +110,6 @@ export interface Item {
   colors: MarkColors;
   kind: DocumentKind;
   sources: Record<string, ValueSource>;
-  /** The columns reviewed for this item (another kind of document has fewer). */
-  columns: string[] | null;
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];

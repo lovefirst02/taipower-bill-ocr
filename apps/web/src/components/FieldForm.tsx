@@ -13,8 +13,6 @@ interface Props {
   onChange: (column: string, value: string | number | null, source: ValueSource) => void;
   /** Where each value came from; shown beside the field. */
   sources?: Record<string, ValueSource>;
-  /** Fields reviewed for this item; all when not given. */
-  only?: string[] | null;
   /** The field whose value is being picked on the image. */
   picking?: string | null;
   onPick?: (column: string | null) => void;
@@ -83,14 +81,13 @@ function FieldInput({ column, value, readOnly, onFocus, onChange }: {
 
 export function FieldForm({
   columns, row, ocrRow, issues, alternatives, editable, focused, onFocus, onChange,
-  sources = {}, only = null, picking = null, onPick,
+  sources = {}, picking = null, onPick,
 }: Props) {
   const flagged = new Set(issues.flatMap((issue) => issue.columns));
-  const shownColumns = only ? columns.filter((column) => only.includes(column.key)) : columns;
   return (
     <div className="field-form">
       {SECTIONS.map((section) => {
-        const inSection = shownColumns.filter((column) => section.match(column.key));
+        const inSection = columns.filter((column) => section.match(column.key));
         if (!inSection.length) return null;
         return (
           <fieldset key={section.title}>

@@ -339,7 +339,6 @@ def create_app(
             "colors": {"highlight": settings.highlight_color, "label": settings.label_color},
             "kind": page.get("kind") or documents.TAIPOWER,
             "sources": page.get("sources") or {},
-            "columns": documents.DOCUMENT_COLUMNS if page.get("kind") == documents.OTHER else None,
             "pages": [
                 {
                     "page": shown["page_number"],

@@ -289,7 +289,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(detail["kind"], "other")
         self.assertEqual(detail["marks"], [])
         self.assertTrue(all("not found" in issue["en"] for issue in detail["issues"]))
-        self.assertEqual(detail["columns"], ["Billing Period 計費期間", "用電度數", "稅前應繳總金額", "應繳總金額"])
+        # Every column stays open for the reviewer to fill in.
+        columns = [column["key"] for column in self.client.get("/api/columns").json()]
+        self.assertEqual(set(detail["row"]), set(columns))
 
     def submit_all(self, user):
         store = self.app.state.store

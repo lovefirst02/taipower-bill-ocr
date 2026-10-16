@@ -39,7 +39,8 @@ SOURCES = {
     "manual": "手動輸入",
     "alternative": "另一個辨識結果",
 }
-# What a non-Taipower document is reviewed for.
+# What is looked for by keyword on a non-Taipower document; every other
+# column stays open for the reviewer to fill in.
 DOCUMENT_COLUMNS = [PERIOD, USAGE, PRETAX, TOTAL]
 # The red label written beside each value's highlight.
 LABELS = {PERIOD: "Billing period", USAGE: USAGE_LABEL, PRETAX: "Grey Electricity Cost"}
