@@ -27,15 +27,16 @@ from taipower_bill_ocr.batch import (
 )
 from taipower_bill_ocr.dataset import page_record
 
-from .evidence import USAGE_LABEL, default_marks, is_usage_mark, usage_marks
+from . import documents
+from .evidence import USAGE_LABEL, current_usage_kwh, default_marks, is_usage_mark, usage_marks
 from .settings import Settings
 from .store import Store
 
 log = logging.getLogger("taipower_web_api.worker")
 
 
-def usage_marks_for(store: Store, page: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-    """Marks for 本期 usage on the bill's back page.
+def usage_marks_for(store: Store, page: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], Any]:
+    """Marks for 本期 usage on the bill's back page, and the kWh read there.
 
     節電資訊 is printed on the back (page 2), never on the bill page, so the
     bill page is not searched: a 本期 there would be the wrong thing to mark.
@@ -45,8 +46,8 @@ def usage_marks_for(store: Store, page: dict[str, Any]) -> tuple[list[dict[str, 
             back["dataset"], (back["image_width"], back["image_height"]), back["page_number"]
         )
         if marks:
-            return marks, notes
-    return [], [f"{USAGE_LABEL}: 本期度數 (節電資訊) not found on the back page, add the mark by hand"]
+            return marks, notes, current_usage_kwh(back["dataset"])
+    return [], [f"{USAGE_LABEL}: 本期度數 (節電資訊) not found on the back page, add the mark by hand"], None
 
 
 class OcrWorker:
@@ -193,6 +194,8 @@ class OcrWorker:
         if self._cancel.is_set():
             self.store.set_upload(upload_id, status="paused")
             return
+        if not self.store.bill_count(upload_id):
+            self._add_document_item(upload_id)
         self._add_usage_marks(upload_id)
         self.store.set_upload(
             upload_id,
@@ -201,16 +204,35 @@ class OcrWorker:
             processed_at=datetime.now().isoformat(timespec="seconds"),
         )
 
+    def _add_document_item(self, upload_id: int) -> None:
+        """No Taipower bill in the upload: review its first page as another kind of document.
+
+        Every PDF and image is accepted; what keywords do not find is picked
+        on the page or typed in by the reviewer.
+        """
+        pages = sorted(
+            (page for page in self.store.pages() if page["upload_id"] == upload_id),
+            key=lambda page: page["page_number"] or 0,
+        )
+        if not pages:
+            return
+        first = pages[0]
+        self.store.update_page(first["id"], **documents.detect(self.store, first, self.settings))
+
     def _add_usage_marks(self, upload_id: int) -> None:
         """Once every page is read, mark 本期 usage, which is often on the back page."""
         for page in self.store.pages(bills_only=True):
-            if page["upload_id"] != upload_id or page["status"] != "draft":
+            if page["upload_id"] != upload_id or page["status"] != "draft" or page.get("kind") == documents.OTHER:
                 continue
             marks, notes = page["marks"] or [], page["mark_notes"] or []
             if any(is_usage_mark(mark) for mark in marks) or any(USAGE_LABEL in note for note in notes):
                 continue  # already done before a pause or restart
-            usage, usage_notes = usage_marks_for(self.store, page)
-            self.store.update_page(page["id"], marks=marks + usage, mark_notes=notes + usage_notes)
+            usage, usage_notes, kwh = usage_marks_for(self.store, page)
+            values: dict[str, Any] = {"marks": marks + usage, "mark_notes": notes + usage_notes}
+            if kwh is not None and (page["row"] or {}).get(documents.USAGE) is None:
+                values["row"] = {**page["row"], documents.USAGE: kwh}
+                values["ocr_row"] = {**(page["ocr_row"] or {}), documents.USAGE: kwh}
+            self.store.update_page(page["id"], **values)
 
     def _store_page(self, upload_id: int, filename: str, path: Path, event: PageDone) -> None:
         dataset = page_record(

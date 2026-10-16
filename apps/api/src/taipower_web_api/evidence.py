@@ -134,7 +134,10 @@ def default_marks(
             y += min(80.0, h * 0.06)  # below the block's title bar, where it is visible
             h = max(24.0, height * 0.02)
             w = min(w, width * 0.35)
-        marks += _highlight_and_label(target["label"], (x, y, w, h), image_size, taken, regions or [])
+        added = _highlight_and_label(target["label"], (x, y, w, h), image_size, taken, regions or [])
+        for mark in added:
+            mark["field"] = column  # picking a new value for it replaces these
+        marks += added
     return marks, notes
 
 
@@ -232,8 +235,9 @@ def usage_marks(
         for bounds in (dataset.get("blocks") or {}).values()
     ]
     marks = _highlight_and_label(USAGE_LABEL, box, image_size, printed, regions, group=f"{USAGE_GROUP}-{_new_id()}")
-    if page is not None:
-        for mark in marks:
+    for mark in marks:
+        mark["field"] = "用電度數"
+        if page is not None:
             mark["page"] = page
     where = f" (page {page})" if page is not None else ""
     notes = [] if exact else [f"{USAGE_LABEL}: 本期 found{where} but not its 度數, check the highlight"]

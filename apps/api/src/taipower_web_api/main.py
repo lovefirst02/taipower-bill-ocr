@@ -25,7 +25,9 @@ from taipower_bill_ocr.excel_export import (
     recompute_other_adjustment,
 )
 
-from . import evidence
+from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
+
+from . import documents, evidence
 from .reports import (
     WorkbookWriter,
     archive_evidence,
@@ -36,12 +38,16 @@ from .reports import (
     new_evidence_path,
     workbook_dir,
 )
-from .settings import OCR_BACKENDS, RESTART_REQUIRED, WORKBOOK_MODES, Settings
+from .settings import KEYWORD_SETTINGS, OCR_BACKENDS, RESTART_REQUIRED, WORKBOOK_MODES, Settings
 from .store import Store, now
 from .worker import OcrWorker, usage_marks_for
 
 TEXT_COLUMNS = {"Billing Period 計費期間", "Custom No. 電號"}
-EDITABLE_COLUMNS = [column for column in COLUMNS if column not in {"其他調整費用", "來源檔案", "頁碼", "需人工檢查"}]
+# The 17 columns plus the period's total usage (from the bill's back page,
+# or from any other kind of document).
+API_COLUMNS = [*COLUMNS, documents.USAGE]
+COLUMN_LABELS = {**COLUMN_LABELS_EN, documents.USAGE: "Electricity Usage (kWh)"}
+EDITABLE_COLUMNS = [column for column in API_COLUMNS if column not in {"其他調整費用", "來源檔案", "頁碼", "需人工檢查"}]
 
 
 class Mark(BaseModel):
@@ -58,12 +64,16 @@ class Mark(BaseModel):
     page: int | None = None
     # "#rrggbb"; None follows the default colours in the settings.
     color: str | None = Field(default=None, pattern="^#[0-9a-fA-F]{6}$")
+    # The value this mark is evidence for; picking a new value replaces it.
+    field: str | None = None
 
 
 class ItemUpdate(BaseModel):
     user: str
     row: dict[str, Any] | None = None
     marks: list[Mark] | None = None
+    # Where each value came from (see documents.SOURCES).
+    sources: dict[str, str] | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -174,11 +184,11 @@ def create_app(
         return [
             {
                 "key": column,
-                "label": COLUMN_LABELS_EN[column],
+                "label": COLUMN_LABELS[column],
                 "editable": column in EDITABLE_COLUMNS,
                 "numeric": column not in TEXT_COLUMNS | {"來源檔案", "需人工檢查"},
             }
-            for column in COLUMNS
+            for column in API_COLUMNS
         ]
 
     # ---------------------------------------------------------------- upload
@@ -304,6 +314,7 @@ def create_app(
                 "billing_period": row.get("Billing Period 計費期間"),
                 "customer_number": row.get("Custom No. 電號"),
                 "total": row.get("應繳總金額"),
+                "kind": page.get("kind") or documents.TAIPOWER,
                 "submitted_at": page["submitted_at"],
             })
         return result
@@ -326,8 +337,21 @@ def create_app(
             "mark_notes": page["mark_notes"],
             "image": {"width": page["image_width"], "height": page["image_height"], "dpi": settings.dpi},
             "colors": {"highlight": settings.highlight_color, "label": settings.label_color},
+            "kind": page.get("kind") or documents.TAIPOWER,
+            "sources": page.get("sources") or {},
+            "columns": documents.DOCUMENT_COLUMNS if page.get("kind") == documents.OTHER else None,
             "pages": [
-                {"page": shown["page_number"], "width": shown["image_width"], "height": shown["image_height"], "bill": shown["id"] == page["id"]}
+                {
+                    "page": shown["page_number"],
+                    "width": shown["image_width"],
+                    "height": shown["image_height"],
+                    "bill": shown["id"] == page["id"],
+                    # OCR text and where it is, so a value can be picked on the image.
+                    "lines": [
+                        {"text": line["text"], "x": line["x"], "y": line["y"], "w": line["width"], "h": line["height"]}
+                        for line in (shown["dataset"] or {}).get("ocr_lines") or []
+                    ],
+                }
                 for shown in view_pages(page)
             ],
             "submitted_at": page["submitted_at"],
@@ -353,6 +377,12 @@ def create_app(
             values["row"] = row
         if update.marks is not None:
             values["marks"] = [mark.model_dump(exclude_none=True) for mark in update.marks]
+        if update.sources is not None:
+            sources = dict(page.get("sources") or {})
+            for column, source in update.sources.items():
+                if column in EDITABLE_COLUMNS and source in documents.SOURCES:
+                    sources[column] = source
+            values["sources"] = sources
         if values:
             store.update_page(page["id"], **values)
         return store.page(page["id"])
@@ -401,6 +431,10 @@ def create_app(
         page = page_or_404(page_id)
         if page["status"] == "submitted":
             raise HTTPException(409, "already submitted; reopen it to edit")
+        if page.get("kind") == documents.OTHER:
+            found = documents.detect(store, page, settings)
+            store.update_page(page_id, marks=found["marks"], mark_notes=found["mark_notes"])
+            return item(page_id)
         locations = {
             column: evidence.FieldLocation(tuple(value["box"]), value["exact"])
             for column, value in (page["locations"] or {}).items()
@@ -413,9 +447,23 @@ def create_app(
         marks, notes = evidence.default_marks(
             locations, (page["image_width"], page["image_height"]), page["row"], printed, regions
         )
-        usage, usage_notes = usage_marks_for(store, page)
+        usage, usage_notes, _ = usage_marks_for(store, page)
         marks, notes = marks + usage, notes + usage_notes
         store.update_page(page_id, marks=marks, mark_notes=notes)
+        return item(page_id)
+
+    @app.post("/api/items/{page_id}/redetect")
+    def redetect(page_id: int) -> dict[str, Any]:
+        """Look for the values again with the current keywords (another kind of document).
+
+        Replaces the values, their sources and the marks.
+        """
+        page = page_or_404(page_id)
+        if page.get("kind") != documents.OTHER:
+            raise HTTPException(409, "only documents that are not Taipower bills are found by keyword")
+        if page["status"] == "submitted":
+            raise HTTPException(409, "already submitted; reopen it to edit")
+        store.update_page(page_id, **documents.detect(store, page, settings))
         return item(page_id)
 
     @app.get("/api/items/{page_id}/evidence.png")
@@ -500,6 +548,7 @@ def create_app(
             "restart_required": sorted(RESTART_REQUIRED),
             "running": app.state.running,
             "options": {"workbooks": list(WORKBOOK_MODES), "ocr_backend": list(OCR_BACKENDS)},
+            "keyword_defaults": {key: list(DEFAULT_KEYWORDS[key]) for key in KEYWORD_SETTINGS},
             "dpi": settings.dpi,
             "data_dir": str(settings.data_dir),
         }

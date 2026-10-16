@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS pages (
     submitted_at TEXT,
     submitted_by TEXT,
     hidden INTEGER NOT NULL DEFAULT 0, -- submitted, then cleared from the user's list
-    evidence_file TEXT               -- the submitted PDF, relative to the output folder
+    evidence_file TEXT,              -- the submitted PDF, relative to the output folder
+    kind TEXT,                       -- taipower (NULL) | other: not a Taipower bill
+    sources_json TEXT                -- where each value came from: keyword, pick, manual...
 );
 CREATE INDEX IF NOT EXISTS pages_upload ON pages(upload_id);
 CREATE INDEX IF NOT EXISTS uploads_user ON uploads(user);
@@ -58,6 +60,7 @@ _JSON_COLUMNS = {
     "marks_json": "marks",
     "mark_notes_json": "mark_notes",
     "dataset_json": "dataset",
+    "sources_json": "sources",
 }
 
 
@@ -93,7 +96,9 @@ class Store:
         self._db.executescript(SCHEMA)
         # Columns added since the first release.
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(pages)")}
-        for name, definition in (("hidden", "INTEGER NOT NULL DEFAULT 0"), ("evidence_file", "TEXT")):
+        for name, definition in (
+            ("hidden", "INTEGER NOT NULL DEFAULT 0"), ("evidence_file", "TEXT"), ("kind", "TEXT"), ("sources_json", "TEXT"),
+        ):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
         self._db.commit()

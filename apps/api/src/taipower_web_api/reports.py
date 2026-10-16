@@ -21,10 +21,12 @@ from taipower_bill_ocr.dataset import PROGRAM_VERSION
 from taipower_bill_ocr.excel_export import COLUMNS, REVIEW_COLUMN
 from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_master, save_tables
 
+from . import documents
 from .store import Store
 
 UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出者", "送出時間", "狀態", "證據檔"
-REPORT_COLUMNS = [*COLUMNS, UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE]
+DOCUMENT_TYPE, VALUE_SOURCES = "文件類型", "欄位來源"
+REPORT_COLUMNS = [*COLUMNS, documents.USAGE, DOCUMENT_TYPE, VALUE_SOURCES, UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE]
 
 log = logging.getLogger("taipower_web_api.reports")
 REVIEWED = "已人工確認"
@@ -117,7 +119,10 @@ def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[
         # Relative to the output folder; bills submitted before the folder
         # was changed keep their full path.
         evidence = str(saved.relative_to(output_dir)) if saved.is_relative_to(output_dir) else str(saved)
+    kind = page.get("kind") or documents.TAIPOWER
     extras = {
+        DOCUMENT_TYPE: documents.DOCUMENT_TYPES.get(kind, kind),
+        VALUE_SOURCES: documents.source_text(kind, page.get("sources")),
         UPLOADER: page["user"],
         SUBMITTER: page.get("submitted_by"),
         SUBMITTED_AT: page.get("submitted_at"),
@@ -189,6 +194,47 @@ def apply_corrections(dataset: Mapping[str, Any], ocr_row: Mapping[str, Any], ro
     return result
 
 
+# How each value of another kind of document is recorded in the master's Fields.
+_DOCUMENT_FIELDS = {
+    documents.PERIOD: ("billing_period", "計費期間"),
+    documents.USAGE: ("energy_kwh", "用電度數"),
+    documents.PRETAX: ("pretax_total_twd", "未稅金額"),
+    documents.TOTAL: ("total_amount_twd", "含稅金額"),
+}
+_SOURCE_STATUS = {"keyword": "found_by_keyword", "pick": "picked_by_reviewer", "manual": "entered_by_reviewer"}
+
+
+def document_record(page: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
+    """The master's record of a document that is not a Taipower bill.
+
+    Its OCR text is kept as read; the reviewed values are added as fields of
+    a "document" block, each with where it came from.
+    """
+    record = copy.deepcopy(dict(page["dataset"]))
+    row, ocr_row = page["row"] or {}, page["ocr_row"] or {}
+    sources, locations = page.get("sources") or {}, page.get("locations") or {}
+    for column, (key, label) in _DOCUMENT_FIELDS.items():
+        value = row.get(column)
+        if value is None:
+            continue
+        source = sources.get(column, "manual")
+        location = locations.get(column)
+        box = dict(zip(("x", "y", "width", "height"), location["box"])) if location else None
+        record["fields"].append({
+            "block": "document", "block_label": "其他單據", "key": key, "label": label, "printed_label": None,
+            "value": value, "recognized": True, "status": _SOURCE_STATUS.get(source, source), "confidence": "reviewed",
+            "checks": None, "cross_check_value": ocr_row.get(column) if ocr_row.get(column) != value else None,
+            "source": f"{source}:{reviewer}", "origin": source, "bbox": box,
+        })
+    start, end = _split_period(row.get(documents.PERIOD))
+    record["summary"].update(
+        document_type="other_document", billing_period_start=start, billing_period_end=end,
+        total_amount_twd=row.get(documents.TOTAL) if row.get(documents.TOTAL) is not None else row.get(documents.PRETAX),
+        needs_review=False, confidence_review=0,
+    )
+    return record
+
+
 def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> list[str]:
     """Rebuild both workbooks from submitted bills.
 
@@ -211,7 +257,11 @@ def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> 
     for upload_id, bill_pages in sorted(by_upload.items()):
         upload = store.upload(upload_id)
         corrected = {
-            page["id"]: apply_corrections(page["dataset"], page["ocr_row"], page["row"], page["submitted_by"] or page["user"])
+            page["id"]: (
+                document_record(page, page["submitted_by"] or page["user"])
+                if page.get("kind") == documents.OTHER
+                else apply_corrections(page["dataset"], page["ocr_row"], page["row"], page["submitted_by"] or page["user"])
+            )
             for page in bill_pages
         }
         # Back pages (meter readings, energy saving) of the same upload belong

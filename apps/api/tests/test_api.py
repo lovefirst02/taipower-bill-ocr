@@ -55,6 +55,21 @@ def png_bytes(size=(1654, 2339)):
     return buffer.getvalue()
 
 
+def landlord_statement():
+    """A landlord's allocation for a building with one meter (not a Taipower bill)."""
+    statement = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+    cells = [
+        ("電費分攤明細表", 400, 80, 260),
+        ("計費期間：113/01/01 ~ 113/01/31", 100, 140, 520),
+        ("全棟總度數", 100, 200, 160), ("85,000 度", 300, 200, 140),
+        ("承租戶", 100, 280, 100), ("分攤度數", 380, 280, 130), ("未稅金額", 580, 280, 130), ("含稅金額", 920, 280, 130),
+        ("乙公司", 100, 330, 100), ("20,000", 390, 330, 100), ("60,000", 590, 330, 100), ("63,000", 930, 330, 100),
+        ("甲公司", 100, 380, 100), ("15,000", 390, 380, 100), ("45,000", 590, 380, 100), ("47,250", 930, 380, 100),
+    ]
+    statement.ocr_lines = [OcrLine(text, x, y, width, 30, None) for text, x, y, width in cells]
+    return statement
+
+
 def energy_saving_page():
     """A bill's back page: the 節電資訊 table with this period's usage."""
     page = BillResult({
@@ -266,13 +281,15 @@ class ApiTests(unittest.TestCase):
         self.assertLess(period["h"], 100)  # not the 1188 px block
         self.assertIn("Billing period: exact line not found, drag the highlight onto Billing Period 計費期間", detail["mark_notes"])
 
-    def test_image_that_is_not_a_bill_is_not_sent_to_review(self):
+    def test_image_with_nothing_to_find_is_filled_in_by_hand(self):
         empty = BillResult({"document_type": "unknown", "quality": {"warnings": ["legacy_virtual_blocks"]}, "charge_info": {}})
         with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: empty):
             self.upload("Amy", "photo.png")
-        uploads = self.client.get("/api/uploads", params={"user": "Amy"}).json()
-        self.assertEqual(uploads[0]["status"], "done")
-        self.assertEqual(self.client.get("/api/items", params={"user": "Amy"}).json(), [])
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertEqual(detail["kind"], "other")
+        self.assertEqual(detail["marks"], [])
+        self.assertTrue(all("not found" in issue["en"] for issue in detail["issues"]))
+        self.assertEqual(detail["columns"], ["Billing Period 計費期間", "用電度數", "稅前應繳總金額", "應繳總金額"])
 
     def submit_all(self, user):
         store = self.app.state.store
@@ -634,6 +651,70 @@ class ApiTests(unittest.TestCase):
         bad = self.client.put(f"/api/items/{item_id}", json={"user": "Amy", "marks": [{**marks[0], "color": "blue"}]})
         self.assertEqual(bad.status_code, 422)
         self.assertEqual(self.local_client().put("/api/settings", json={"values": {"label_color": "red"}}).status_code, 400)
+
+    def upload_statement(self, user="Amy", name="statement.png"):
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: landlord_statement()):
+            self.upload(user, name)
+        return self.client.get(f"/api/items/{self.first_item(user)['id']}").json()
+
+    def test_landlord_statement_values_are_found_by_keyword(self):
+        detail = self.upload_statement()
+        self.assertEqual(detail["kind"], "other")
+        row = detail["row"]
+        self.assertEqual(
+            (row["Billing Period 計費期間"], row["用電度數"], row["稅前應繳總金額"], row["應繳總金額"]),
+            ("113/01/01~113/01/31", 20000, 60000, 63000),  # no company name set: the first tenant row
+        )
+        self.assertEqual(set(detail["sources"].values()), {"keyword"})
+        labels = {mark["text"]: mark for mark in detail["marks"] if mark["type"] == "label"}
+        self.assertEqual(set(labels), {"Billing period", "Electricity Usage (kWh)", "Grey Electricity Cost"})
+        self.assertTrue(all(mark.get("field") for mark in detail["marks"]))
+        # Every found value waits for the reviewer's check.
+        self.assertTrue(any("check it" in issue["en"] for issue in detail["issues"]))
+        self.assertTrue(detail["pages"][0]["lines"])
+
+    def test_company_name_in_settings_picks_the_companys_row(self):
+        detail = self.upload_statement()
+        self.local_client().put("/api/settings", json={"values": {"company_names": "甲公司\n甲科技"}})
+        again = self.client.post(f"/api/items/{detail['id']}/redetect").json()
+        self.assertEqual((again["row"]["用電度數"], again["row"]["稅前應繳總金額"]), (15000, 45000))
+        self.assertEqual(self.app.state.settings.company_names, ["甲公司", "甲科技"])
+
+    def test_document_values_and_their_sources_reach_both_workbooks(self):
+        detail = self.upload_statement()
+        row = {"用電度數": 15000, "稅前應繳總金額": 45000}
+        self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy", "row": row, "sources": {"用電度數": "pick", "稅前應繳總金額": "manual"}})
+        report = load_workbook(self.settings.report_workbook)["Bills"]
+        header = [cell.value for cell in report[1]]
+        line = dict(zip(header, [cell.value for cell in report[2]]))
+        self.assertEqual((line["文件類型"], line["用電度數"], line["稅前應繳總金額"]), ("其他單據", 15000, 45000))
+        self.assertIn("用電度數:圖上點選", line["欄位來源"])
+        self.assertIn("未稅金額:手動輸入", line["欄位來源"])
+        self.assertIn("計費期間:關鍵字", line["欄位來源"])
+
+        fields = load_workbook(self.settings.master_workbook)["Fields"]
+        header = [cell.value for cell in fields[1]]
+        rows = [dict(zip(header, [cell.value for cell in item])) for item in fields.iter_rows(min_row=2)]
+        usage = next(item for item in rows if item["block"] == "document" and item["key"] == "energy_kwh")
+        self.assertEqual((usage["value"], usage["status"], usage["cross_check_value"]), (15000, "picked_by_reviewer", 20000))
+        pages = load_workbook(self.settings.master_workbook)["Pages"]
+        header = [cell.value for cell in pages[1]]
+        self.assertEqual(dict(zip(header, [cell.value for cell in pages[2]]))["document_type"], "other_document")
+
+    def test_taipower_bill_usage_comes_from_the_back_page(self):
+        detail = self.upload_two_page_bill()
+        self.assertEqual(detail["kind"], "taipower")
+        self.assertEqual(detail["row"]["用電度數"], 15000)
+        report_sources = self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy"})
+        self.assertEqual(report_sources.status_code, 200)
+        report = load_workbook(self.settings.report_workbook)["Bills"]
+        header = [cell.value for cell in report[1]]
+        line = dict(zip(header, [cell.value for cell in report[2]]))
+        self.assertEqual((line["文件類型"], line["用電度數"], line["欄位來源"]), ("台電帳單", 15000, "其他:台電帳單辨識"))
+
+    def test_redetect_is_only_for_other_documents(self):
+        self.upload("Amy", "jan.png")
+        self.assertEqual(self.client.post(f"/api/items/{self.first_item('Amy')['id']}/redetect").status_code, 409)
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

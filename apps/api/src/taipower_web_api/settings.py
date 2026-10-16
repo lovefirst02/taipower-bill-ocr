@@ -13,10 +13,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 WORKBOOK_MODES = ("shared", "per_user")
 OCR_BACKENDS = ("crosscheck", "paddleocr", "windows")
+
+def _words(value: Any) -> list[str]:
+    """A keyword list from a list, or text with one per line (or comma separated)."""
+    items = value if isinstance(value, (list, tuple)) else re.split(r"[\n,，、]", str(value))
+    words: list[str] = []
+    for item in items:
+        word = str(item).strip()
+        if word and word not in words:
+            words.append(word)
+    return words
+
+
+# Keywords for documents that are not Taipower bills (see keyword_extract).
+KEYWORD_SETTINGS = tuple(DEFAULT_KEYWORDS)
 
 # Editable settings: the environment variable that locks each, and its parser.
 EDITABLE: dict[str, tuple[str, Callable[[Any], Any]]] = {
@@ -28,6 +44,7 @@ EDITABLE: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "port": ("TAIPOWER_PORT", int),
     "highlight_color": ("TAIPOWER_HIGHLIGHT_COLOR", lambda value: str(value).strip().lower()),
     "label_color": ("TAIPOWER_LABEL_COLOR", lambda value: str(value).strip().lower()),
+    **{key: (f"TAIPOWER_{key.upper()}", _words) for key in KEYWORD_SETTINGS},
 }
 COLOR = re.compile(r"^#[0-9a-f]{6}$")
 # Used only when the server starts.
@@ -56,6 +73,13 @@ class Settings:
     # Evidence marks without a colour of their own: highlighter and red pen.
     highlight_color: str = "#ffeb3b"
     label_color: str = "#d32f2f"
+    # Keywords for documents that are not Taipower bills.
+    company_names: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS["company_names"]))
+    self_terms: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS["self_terms"]))
+    period_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS["period_keywords"]))
+    usage_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS["usage_keywords"]))
+    cost_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS["cost_keywords"]))
+    exclude_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS["exclude_keywords"]))
     web_dist: Path = REPO_ROOT / "apps" / "web" / "dist"
     # Settings fixed by environment variables.
     locked: frozenset[str] = field(default_factory=frozenset)
@@ -79,6 +103,10 @@ class Settings:
         for name in ("highlight_color", "label_color"):
             if not COLOR.match(getattr(self, name)):
                 raise ValueError(f"{name.replace('_', ' ')} must look like #ffeb3b")
+        for name in KEYWORD_SETTINGS:
+            words = getattr(self, name)
+            if len(words) > 100 or any(len(word) > 60 for word in words):
+                raise ValueError(f"{name.replace('_', ' ')}: at most 100 keywords of up to 60 characters")
 
     @property
     def database(self) -> Path:
@@ -109,7 +137,9 @@ class Settings:
         return self.workbooks == "per_user"
 
     def editable(self) -> dict[str, Any]:
-        return {key: str(getattr(self, key)) if key == "output_dir" else getattr(self, key) for key in EDITABLE}
+        values = {key: getattr(self, key) for key in EDITABLE}
+        values["output_dir"] = str(self.output_dir)
+        return {key: list(value) if isinstance(value, list) else value for key, value in values.items()}
 
     def update(self, values: Mapping[str, Any]) -> set[str]:
         """Apply edits from the settings page; returns the keys that changed.
