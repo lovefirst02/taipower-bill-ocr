@@ -204,6 +204,24 @@ class Store:
         rows = self._query("SELECT COUNT(*) AS n FROM pages WHERE upload_id = ? AND is_bill = 1", (upload_id,))
         return int(rows[0]["n"])
 
+    def item_pages(self, page: dict[str, Any]) -> list[dict[str, Any]]:
+        """Every page that belongs to a bill page, in the document's order.
+
+        Its back pages, and for the upload's first bill also the pages
+        before it (a cover or a letter), so no page of an upload is left out.
+        """
+        if page["page_number"] is None:
+            return [page]
+        rows = self._query(
+            "SELECT pages.*, uploads.user, uploads.filename, uploads.path FROM pages "
+            "JOIN uploads ON uploads.id = pages.upload_id "
+            "WHERE pages.upload_id = ? AND pages.page_number < ? ORDER BY pages.page_number",
+            (page["upload_id"], page["page_number"]),
+        )
+        before = [_decode(row) for row in rows]
+        leading = [] if any(other["is_bill"] for other in before) else before
+        return [*leading, page, *self.companion_pages(page)]
+
     def companion_pages(self, page: dict[str, Any]) -> list[dict[str, Any]]:
         """The pages after a bill page in its PDF, up to the next bill (its back pages)."""
         if page["page_number"] is None:

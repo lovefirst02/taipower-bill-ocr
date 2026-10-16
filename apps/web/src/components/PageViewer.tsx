@@ -33,8 +33,12 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
   const svgRef = useRef<SVGSVGElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1); // 1 = fit to panel width
-  // Dragging the page itself (not a mark) moves the view, like a hand tool.
-  const [pan, setPan] = useState<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  // The view is moved by dragging with the middle button, with Space held, or
+  // with the hand tool on; a plain left drag is for marks and picking.
+  const [pan, setPan] = useState<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [handTool, setHandTool] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const hand = handTool || spaceHeld;
   // The point kept under the cursor while zooming with Ctrl + wheel.
   const zoomAnchor = useRef<{ x: number; y: number; px: number; py: number; ratio: number } | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -87,29 +91,51 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
     panel.scrollTop = anchor.py * anchor.ratio - anchor.y;
   }, [zoom]);
 
+  // Space works like the hand tool while held (not while typing in a field).
+  useEffect(() => {
+    const typing = (event: KeyboardEvent) => ["INPUT", "TEXTAREA", "SELECT"].includes((event.target as HTMLElement).tagName);
+    const down = (event: KeyboardEvent) => {
+      if (event.code === "Space" && !typing(event)) {
+        event.preventDefault(); // no page scroll
+        setSpaceHeld(true);
+      }
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpaceHeld(false);
+    };
+    const reset = () => setSpaceHeld(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
+
   const panStart = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !scrollRef.current) return;
+    if (!scrollRef.current) return;
+    if (event.button === 0 && !hand) {
+      onSelect(null); // a plain click on the page clears the selection
+      return;
+    }
+    if (event.button !== 1 && !(event.button === 0 && hand)) return;
+    event.preventDefault();
     const panel = scrollRef.current;
     try {
       panel.setPointerCapture(event.pointerId);
     } catch {
       // not an active pointer
     }
-    setPan({ x: event.clientX, y: event.clientY, left: panel.scrollLeft, top: panel.scrollTop, moved: false });
+    setPan({ x: event.clientX, y: event.clientY, left: panel.scrollLeft, top: panel.scrollTop });
   };
   const panMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!pan || !scrollRef.current) return;
-    const dx = event.clientX - pan.x;
-    const dy = event.clientY - pan.y;
-    scrollRef.current.scrollLeft = pan.left - dx;
-    scrollRef.current.scrollTop = pan.top - dy;
-    if (!pan.moved && Math.abs(dx) + Math.abs(dy) > 3) setPan({ ...pan, moved: true });
+    scrollRef.current.scrollLeft = pan.left - (event.clientX - pan.x);
+    scrollRef.current.scrollTop = pan.top - (event.clientY - pan.y);
   };
-  const panEnd = () => {
-    // A click without dragging still clears the selection.
-    if (pan && !pan.moved) onSelect(null);
-    setPan(null);
-  };
+  const panEnd = () => setPan(null);
 
   const toImage = (event: ReactPointerEvent): DOMPoint => {
     const svg = svgRef.current!;
@@ -120,6 +146,7 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
   };
 
   const begin = (event: ReactPointerEvent, mark: Mark, handle?: Handle) => {
+    if (event.button !== 0 || hand) return; // moving the view: let the page handle it
     event.stopPropagation();
     onSelect(mark.id);
     if (!editable) return;
@@ -159,6 +186,7 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
     h: Math.abs(point.y - start.y),
   });
   const pickDown = (event: ReactPointerEvent) => {
+    if (event.button !== 0 || hand) return; // moving the view: let the page handle it
     event.stopPropagation();
     try {
       (event.target as Element).setPointerCapture(event.pointerId);
@@ -187,13 +215,27 @@ export function PageViewer({ imageUrl, width, height, marks, colors = DEFAULT_CO
         <span className="zoom-value">{Math.round(zoom * 100)}%</span>
         <button onClick={() => setZoom((value) => Math.min(4, value * 1.25))} aria-label="Zoom in">+</button>
         <button onClick={() => setZoom(1)}>Fit width</button>
+        <button
+          className={handTool ? "hand active" : "hand"}
+          aria-pressed={handTool}
+          onClick={() => setHandTool((value) => !value)}
+          title="Hand tool: drag to move the view (or hold Space, or drag with the middle button)"
+        >
+          ✋ Move view
+        </button>
         <span className={picking ? "hint picking" : "hint"}>
-          {picking ?? (editable ? "Drag marks to move · drag the page to pan · Ctrl + wheel to zoom" : "Submitted — reopen to edit · drag to pan · Ctrl + wheel to zoom")}
+          {picking ??
+            (hand
+              ? "Drag to move the view"
+              : editable
+                ? "Drag marks to move · Space + drag or middle button to move the view · Ctrl + wheel to zoom"
+                : "Submitted — reopen to edit · Space + drag to move the view · Ctrl + wheel to zoom")}
         </span>
       </div>
       <div
-        className={pan?.moved ? "viewer-scroll panning" : "viewer-scroll"}
+        className={["viewer-scroll", hand ? "hand" : "", pan ? "panning" : ""].join(" ")}
         ref={scrollRef}
+        onMouseDown={(event) => event.button === 1 && event.preventDefault()} // no browser autoscroll
         onPointerDown={panStart}
         onPointerMove={panMove}
         onPointerUp={panEnd}

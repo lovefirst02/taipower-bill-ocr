@@ -150,13 +150,13 @@ def create_app(
         return page["marks"] or []
 
     def view_pages(page: dict[str, Any]) -> list[dict[str, Any]]:
-        """The bill page and its back pages, which can also hold marks."""
-        return [page, *store.companion_pages(page)]
+        """Every page of the bill in document order; any of them can hold marks."""
+        return store.item_pages(page)
 
     def view_page(page: dict[str, Any], number: int | None) -> dict[str, Any]:
         if number is None or number == page["page_number"]:
             return page
-        found = next((other for other in store.companion_pages(page) if other["page_number"] == number), None)
+        found = next((other for other in store.item_pages(page) if other["page_number"] == number), None)
         if found is None:
             raise HTTPException(404, "page not found")
         return found
@@ -170,17 +170,12 @@ def create_app(
         return evidence.with_colors(marks, settings.highlight_color, settings.label_color)
 
     def build_evidence_pdf(page: dict[str, Any]) -> bytes:
-        """The bill page, then each back page that has marks.
+        """Every page of the bill, in order, with its marks.
 
-        Another kind of document keeps every page: any of them (terms, a
-        signature, the payment details) may be part of the evidence.
+        No page is left out: one without marks may still be evidence (a
+        cover letter, terms, a signature, the payment details).
         """
-        whole = page.get("kind") == documents.OTHER
-        pages = []
-        for shown in view_pages(page):
-            marks = marks_on(page, shown)
-            if whole or shown["id"] == page["id"] or marks:
-                pages.append((shown["page_number"], page_image(shown), marks))
+        pages = [(shown["page_number"], page_image(shown), marks_on(page, shown)) for shown in view_pages(page)]
         return evidence.evidence_pdf(Path(page["path"]), pages, settings.dpi)
 
     # --------------------------------------------------------------- columns
@@ -287,7 +282,9 @@ def create_app(
                 store.update_page(page_id, hidden=1)
                 hidden.append(page_id)
                 continue
-            for back in store.companion_pages(page):
+            for back in store.item_pages(page):
+                if back["id"] == page["id"]:
+                    continue
                 store.delete_page(back["id"])
             store.delete_page(page_id)
             if not store.bill_count(upload["id"]):

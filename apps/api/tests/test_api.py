@@ -483,10 +483,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/items/{item_id}/evidence.png", params={"page": 2}).status_code, 200)
         self.assertEqual(len(PdfReader(io.BytesIO(self.client.get(f"/api/items/{item_id}/evidence.pdf").content)).pages), 2)
 
-        # Without marks on the back page, the evidence is the bill page alone.
+        # The back page stays in the evidence even without marks.
         bill_marks = [mark for mark in detail["marks"] if "page" not in mark]
         self.client.put(f"/api/items/{item_id}", json={"user": "Amy", "marks": bill_marks})
-        self.assertEqual(len(PdfReader(io.BytesIO(self.client.get(f"/api/items/{item_id}/evidence.pdf").content)).pages), 1)
+        self.assertEqual(len(PdfReader(io.BytesIO(self.client.get(f"/api/items/{item_id}/evidence.pdf").content)).pages), 2)
         # Reset puts the usage mark back.
         reset = self.client.post(f"/api/items/{item_id}/reset-marks").json()
         self.assertEqual(sum(mark.get("page") == 2 for mark in reset["marks"]), 2)
@@ -734,6 +734,24 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(PdfReader(io.BytesIO(content)).pages), 3)
         saved = Path(self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy"}).json()["evidence_file"])
         self.assertEqual(len(PdfReader(str(saved)).pages), 3)
+
+    def test_no_page_is_left_out_of_a_bill(self):
+        from pypdf import PdfReader
+
+        cover = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+        pages = {1: cover, 2: official_sample_bill(), 3: energy_saving_page(), 4: cover}
+
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: pages[page]):
+            self.client.post("/api/uploads", data={"user": "Amy"}, files=[("files", ("four.pdf", three_page_pdf(4), "application/pdf"))])
+            self.app.state.worker.wait_idle(10)
+        items = self.client.get("/api/items", params={"user": "Amy"}).json()
+        self.assertEqual([(item["page"], item["kind"]) for item in items], [(2, "taipower")])
+        detail = self.client.get(f"/api/items/{items[0]['id']}").json()
+        # The cover before the bill and both pages after it belong to it, in order.
+        self.assertEqual([(view["page"], view["bill"]) for view in detail["pages"]], [(1, False), (2, True), (3, False), (4, False)])
+        self.assertEqual(self.client.get(f"/api/items/{detail['id']}/image", params={"page": 1}).status_code, 200)
+        content = self.client.get(f"/api/items/{detail['id']}/evidence.pdf").content
+        self.assertEqual(len(PdfReader(io.BytesIO(content)).pages), 4)
 
     def test_redetect_is_only_for_other_documents(self):
         self.upload("Amy", "jan.png")

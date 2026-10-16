@@ -84,7 +84,13 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     setSelectedId(null);
     setFocused(null);
     setMessage(null);
-    api.item(itemId).then(load).catch((error: Error) => setMessage({ kind: "error", text: error.message }));
+    api.item(itemId)
+      .then((loaded) => {
+        load(loaded);
+        // Pages are in document order; open on the bill page itself.
+        setPageIndex(Math.max(0, (loaded.pages ?? []).findIndex((view) => view.bill)));
+      })
+      .catch((error: Error) => setMessage({ kind: "error", text: error.message }));
   }, [itemId, load]);
 
   const editable = item?.status === "draft";

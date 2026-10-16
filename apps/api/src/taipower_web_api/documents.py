@@ -71,7 +71,7 @@ def keywords_of(settings: Settings) -> dict[str, list[str]]:
 
 def document_pages(store: Store, first: dict[str, Any]) -> list[dict[str, Any]]:
     """Every page of the document, first page first."""
-    return [first, *store.companion_pages(first)]
+    return store.item_pages(first)
 
 
 def detect(store: Store, first: dict[str, Any], settings: Settings) -> dict[str, Any]:
