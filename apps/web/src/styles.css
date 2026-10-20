@@ -365,3 +365,4 @@ main { flex: 1; min-width: 0; display: flex; }
 .plan-months input { width: 76px; }
 .plan-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; margin: 6px 0; }
 .plan-controls input.short { width: 60px; margin-left: 4px; }
+.plan-months tr.forecast td, .plan-months tr.forecast th { background: #f3f0ff; }

@@ -643,6 +643,12 @@ npm test           # 前端與後端測試
   PriorCarry、AvailableBudget、MonthBalance、DataStatus、BudgetMethod）與 `Actual_Data`（每個 Site 每月的灰電、
   太陽能、風力度數與費用）。
 - Dashboard 的「Budget vs actual」改用這裡的 Planned Budget。
+- **滾動預估（Forecast）**：Planned Budget 不變，另外顯示：
+  - Forecast：有單據的月份 = 實際；其他月份 = 去年同月 × 今年趨勢（今年已過月份的度數 ÷ 去年同月份），
+    沒有去年資料時用今年已過月份的平均月（run rate），都沒有時用原預估；單價用今年已過月份的實際平均單價。
+  - 年底預估（實際＋預估）與年度預算的差額，在 KPI、Sites 表與各能源頁顯示，超支為紅色。
+  - Adjusted Budget：年度預算扣掉已發生的實際費用，剩下的依各未來月份的預估比例分配——要守住年度預算，每月最多能花多少。
+  - Power BI 的 `PowerBI_EnergyBudget` 增加 ForecastKWh、ForecastCost、AdjustedBudget 三欄（加在最後，原欄位不變）。
 
 ### 預算 vs 實際
 

@@ -403,6 +403,24 @@ export interface PlanMonth {
   prior_carry: number;
   available: number;
   balance: number;
+  /** The year as it is going: the actual, else the baseline × this year's trend. */
+  forecast_kwh: number | null;
+  forecast_cost: number | null;
+  forecast_source: "actual" | "trend" | "run rate" | "estimate";
+  /** What is left of the annual budget, shared over the months to come; null for a month with documents. */
+  adjusted_budget: number | null;
+}
+
+export interface PlanForecast {
+  months_closed: number;
+  /** This year's kWh so far ÷ the baseline of the same months; null without actuals. */
+  trend: number | null;
+  /** This year's actual price so far. */
+  price: number | null;
+  year_end: number;
+  /** Year-end forecast − annual budget (over budget when positive). */
+  variance: number;
+  remaining: number;
 }
 
 export type PlanEnergy = "grey" | "solar" | "wind";
@@ -419,6 +437,7 @@ export interface EnergyPlan {
   months: PlanMonth[];
   actual_cost: number;
   utilization: number | null;
+  forecast: PlanForecast;
 }
 
 export interface SitePlan {

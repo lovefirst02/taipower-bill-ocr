@@ -76,6 +76,7 @@ export function BudgetPlanner() {
   const totals = ENERGIES.map(({ key }) => plan.sites.reduce((sum, item) => sum + item.energies[key].annual, 0));
   const actualTotal = plan.sites.reduce((sum, item) => sum + ENERGIES.reduce((inner, { key }) => inner + item.energies[key].actual_cost, 0), 0);
   const annualTotal = totals.reduce((sum, value) => sum + value, 0);
+  const forecastTotal = plan.sites.reduce((sum, item) => sum + ENERGIES.reduce((inner, { key }) => inner + item.energies[key].forecast.year_end, 0), 0);
   const balanceNow = lastClosed >= 0
     ? plan.sites.reduce((sum, item) => sum + ENERGIES.reduce((inner, { key }) => inner + item.energies[key].months[lastClosed].balance, 0), 0)
     : null;
@@ -106,6 +107,9 @@ export function BudgetPlanner() {
         <div className="kpi"><span className="kpi-label">Balance{lastClosed >= 0 ? ` (end of ${MONTH_NAMES[lastClosed]})` : ""}</span>
           <strong className={balanceNow !== null && balanceNow < 0 ? "over" : ""}>{balanceNow === null ? "—" : `NT$${money(balanceNow)}`}</strong>
           <small>planned + carried − adopted</small></div>
+        <div className="kpi"><span className="kpi-label">Year-end forecast</span>
+          <strong className={forecastTotal > annualTotal ? "over" : ""}>NT${money(forecastTotal)}</strong>
+          <small>{annualTotal ? `${forecastTotal > annualTotal ? "over" : "under"} budget by NT$${money(Math.abs(forecastTotal - annualTotal))}` : "actuals so far + this year's trend"}</small></div>
       </div>
 
       <section className="dash-card">
@@ -145,7 +149,7 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
     <div className="green-scroll">
       <table className="dash-table plan-sites">
         <thead>
-          <tr><th>Site</th><th>Entity</th><th>Site annual budget</th>{ENERGIES.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Sum</th><th>Check</th><th>Actual</th><th>Used</th></tr>
+          <tr><th>Site</th><th>Entity</th><th>Site annual budget</th>{ENERGIES.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Sum</th><th>Check</th><th>Actual</th><th>Used</th><th>Year-end forecast</th><th>vs budget</th></tr>
         </thead>
         <tbody>
           {plan.sites.map((site) => {
@@ -169,6 +173,16 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
                 </td>
                 <td className="num">{money(actual)}</td>
                 <td className="num">{site.energies_total ? `${((actual / site.energies_total) * 100).toFixed(1)}%` : "—"}</td>
+                {(() => {
+                  const yearEnd = ENERGIES.reduce((sum, { key }) => sum + site.energies[key].forecast.year_end, 0);
+                  const variance = yearEnd - site.energies_total;
+                  return (
+                    <>
+                      <td className="num">{money(yearEnd)}</td>
+                      <td className={`num ${variance > 0 ? "over" : ""}`}>{site.energies_total ? `${variance > 0 ? "+" : ""}${money(variance)}` : "—"}</td>
+                    </>
+                  );
+                })()}
               </tr>
             );
           })}
@@ -207,6 +221,12 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
         <span>Annual budget: <strong>NT${money(plan.annual)}</strong> ({plan.method === "approved" ? "approved" : "estimates added up"}; {ALLOCATIONS[plan.allocation]})</span>
         <label>Adjustment % <input className="num short" value={adjustment} disabled={!canEdit} placeholder="0" onChange={(event) => setAdjustment(event.target.value)} /></label>
         <span>Used: {plan.utilization === null ? "—" : `${(plan.utilization * 100).toFixed(1)}%`}</span>
+        <span title="Months with documents are their actuals; the others are last year's month × this year's trend (else this year's average month, else the estimate), at this year's actual price">
+          Year-end forecast: <strong className={plan.forecast.variance > 0 ? "over" : ""}>NT${money(plan.forecast.year_end)}</strong>
+          {" "}({plan.forecast.variance > 0 ? "+" : ""}{money(plan.forecast.variance)} vs budget
+          {plan.forecast.trend !== null ? `; kWh ×${plan.forecast.trend.toFixed(3)} on last year` : ""}
+          {plan.forecast.price !== null ? `; price ${plan.forecast.price.toFixed(4)}` : ""})
+        </span>
         {canEdit && <button type="button" className="primary" disabled={!dirty} onClick={save}>Save</button>}
       </div>
       <div className="green-scroll">
@@ -240,6 +260,13 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
             </tr>
             {row("Est. cost", plan.months.map((month) => month.estimated_cost), "kWh × price × (1 + adjustment %)")}
             {row("Planned budget", plan.months.map((month) => month.planned), "The annual budget shared by the estimated costs", "strong")}
+            {row("Forecast kWh", plan.months.map((month) => month.forecast_kwh), "Actual where documents came in; else last year's month × this year's trend, else this year's average month, else the estimate", "forecast")}
+            {row("Forecast cost", plan.months.map((month) => month.forecast_cost), "Actual where documents came in; else forecast kWh × this year's price × (1 + adjustment %)", "forecast")}
+            <tr className="forecast strong">
+              <th title="What is left of the annual budget (budget − actual so far), shared over the months to come by the forecast. The planned budget does not change.">Adjusted budget</th>
+              {plan.months.map((month) => <td key={month.month} className="num">{month.adjusted_budget === null ? "" : money(month.adjusted_budget)}</td>)}
+              <td className="num total">{money(plan.forecast.remaining)}</td>
+            </tr>
             {row("Actual kWh", plan.months.map((month) => month.actual_kwh), "From the documents")}
             {row("Actual cost", plan.months.map((month) => month.actual_cost), "From the documents")}
             {row("Adopted cost", plan.months.map((month) => month.adopted_cost), "The actual cost when there is one, else the estimate")}

@@ -1501,6 +1501,44 @@ class ApiTests(unittest.TestCase):
         self.assertLessEqual(max(shares) - min(shares), 1)  # the others weigh as January (whole NT$)
         self.assertEqual(sum(month["planned"] for month in later["months"]), 1300000)
 
+    def test_the_rolling_forecast_follows_this_years_trend(self):
+        local = self.local_client()
+        self.save_sites([{"name": "TNF", "meters": ["05785204210"]}])
+
+        def bill(name, start, end, kwh, pretax):
+            page = official_sample_bill()
+            page["user_info"]["customer_number"] = "05785204210"
+            page["user_info"]["billing_period"] = {"start": start, "end": end}
+            page["user_info"]["energy_consumption"] = {"peak_kwh": kwh}
+            page["charge_info"]["pretax_total_twd"] = pretax
+            self.upload_as(name, page)
+
+        for month, days in (("06", 30), ("07", 31), ("08", 31), ("09", 30)):
+            bill(f"2025-{month}.png", f"114/{month}/01", f"114/{month}/{days}", 15000, 761905)
+        for month, days in (("06", 30), ("07", 31)):
+            bill(f"2026-{month}.png", f"115/{month}/01", f"115/{month}/{days}", 16500, 900000)  # 10% more kWh
+        grey = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey", "annual_budget": 9000000}).json()["sites"][0]["energies"]["grey"]
+        forecast = grey["forecast"]
+        self.assertEqual((forecast["months_closed"], forecast["trend"], forecast["price"]), (2, 1.1, round(1800000 / 33000, 4)))
+        months = {month["month"][5:]: month for month in grey["months"]}
+        self.assertEqual((months["06"]["forecast_cost"], months["06"]["forecast_source"]), (900000, "actual"))
+        # August: last year's 15,000 kWh × 1.1 at this year's price.
+        self.assertEqual((months["08"]["forecast_kwh"], months["08"]["forecast_source"]), (16500, "trend"))
+        self.assertAlmostEqual(months["08"]["forecast_cost"], 900000, delta=1)
+        # A month without last year's documents runs at this year's average month (16,500), not ×1.1 again.
+        self.assertEqual((months["01"]["forecast_kwh"], months["01"]["forecast_source"]), (16500, "run rate"))
+        # Every open month comes out at 900,000: the year ends 1.8 million over the 9 million budget.
+        self.assertAlmostEqual(forecast["year_end"], 12 * 900000, delta=12)
+        self.assertAlmostEqual(forecast["variance"], 12 * 900000 - 9000000, delta=12)
+        # The 7.2 million left is shared over the ten months to come; the planned budget is as it was.
+        self.assertEqual(forecast["remaining"], 9000000 - 1800000)
+        self.assertEqual(sum(month["adjusted_budget"] for month in grey["months"] if month["adjusted_budget"] is not None), 7200000)
+        self.assertIsNone(months["07"]["adjusted_budget"])
+        self.assertEqual(sum(month["planned"] for month in grey["months"]), 9000000)
+        book = load_workbook(io.BytesIO(self.client.get("/api/export.xlsx", params={"user": "Amy"}).content))
+        header = [cell.value for cell in book["PowerBI_EnergyBudget"][1]]
+        self.assertEqual(header[-3:], ["ForecastKWh", "ForecastCost", "AdjustedBudget"])
+
     def test_a_budget_plan_round_trips_through_excel(self):
         local = self.plan_setup()
         book = load_workbook(io.BytesIO(self.client.get("/api/plan/template.xlsx", params={"year": 2026}).content))

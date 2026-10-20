@@ -12,7 +12,15 @@ For each site and energy of a year:
 * the actual kWh and cost from the documents; the adopted cost is the
   actual when there is one, else the estimate;
 * the balance rolls on: prior carry (January 0, then last month's balance),
-  available = planned + carry, month-end balance = available − adopted.
+  available = planned + carry, month-end balance = available − adopted;
+* a rolling forecast: months with documents are their actuals; the others
+  are last year's month × this year's trend (actual kWh so far ÷ last
+  year's for the same months), else this year's average month so far,
+  else the estimate — at this year's actual price so far (else the
+  estimated price). The year-end
+  forecast is held against the annual budget, and what is left of the
+  budget is shared over the months to come by the forecast (adjusted
+  budget). The planned budget itself does not change.
 """
 
 from __future__ import annotations
@@ -183,18 +191,71 @@ def _energy_plan(site: str, entity_id: Any, energy: str, year: int, saved: Mappi
                     actual_rate=_plain(item["actual_cost"] / item["actual_kwh"], 4) if has_actual and item["actual_kwh"] else None)
         carry = balance
     spent = sum((_d(item["actual_cost"]) or Decimal(0) for item in months), Decimal(0))
+    forecast = _forecast(months, last_year, adjustment, annual, spent)
     return {
         "energy": energy, "annual_input": _plain(approved), "annual": _plain(annual),
         "method": "approved" if approved is not None else "estimate", "allocation": allocation, "adjustment_pct": _plain(adjustment, 4),
         "months": months, "actual_cost": _plain(spent),
         "utilization": float(round(spent / annual, 4)) if annual else None,
+        "forecast": forecast,
+    }
+
+
+def _forecast(months: list[dict[str, Any]], last_year: Mapping[str, tuple[Decimal | None, Decimal | None]],
+              adjustment: Decimal, annual: Decimal, spent: Decimal) -> dict[str, Any]:
+    """The year as it is going: actuals so far, the months to come by this year's trend."""
+    closed = [item for item in months if item["has_actual"]]
+    last_kwh = {item["month"]: last_year[item["month"][5:]][0] for item in months}
+    # The trend: this year's kWh against last year's, over the same months.
+    pairs = [(_d(item["actual_kwh"]), last_kwh[item["month"]]) for item in closed]
+    pairs = [(actual, base) for actual, base in pairs if actual is not None and base]
+    trend = sum(actual for actual, _ in pairs) / sum(base for _, base in pairs) if pairs else None
+    # Without last year: this year's average month so far (the run rate).
+    so_far = [_d(item["actual_kwh"]) for item in closed if item["actual_kwh"] is not None]
+    run_rate = sum(so_far) / len(so_far) if so_far else None
+    priced = [(_d(item["actual_kwh"]), _d(item["actual_cost"])) for item in closed]
+    priced = [(kwh, cost) for kwh, cost in priced if kwh and cost is not None]
+    actual_price = sum(cost for _, cost in priced) / sum(kwh for kwh, _ in priced) if priced else None
+
+    open_costs: list[Decimal] = []
+    for item in months:
+        if item["has_actual"]:
+            item.update(forecast_kwh=item["actual_kwh"], forecast_cost=item["actual_cost"], forecast_source="actual")
+            continue
+        if last_kwh[item["month"]] is not None and trend is not None:
+            kwh, source = last_kwh[item["month"]] * trend, "trend"
+        elif run_rate is not None:
+            kwh, source = run_rate, "run rate"
+        else:
+            kwh, source = _d(item["kwh"]), "estimate"
+        price = actual_price if actual_price is not None else _d(item["rate"])
+        cost = kwh * price * (1 + adjustment / 100) if kwh is not None and price is not None else None
+        item.update(forecast_kwh=_plain(kwh, 0), forecast_cost=_plain(cost), forecast_source=source)
+        open_costs.append(cost or Decimal(0))
+
+    # What is left of the budget, shared over the months to come by the forecast.
+    remaining = annual - spent
+    open_months = [item for item in months if not item["has_actual"]]
+    shares = _largest_remainder(remaining, open_costs) if open_months and remaining > 0 else [Decimal(0)] * len(open_months)
+    for item, share in zip(open_months, shares):
+        item["adjusted_budget"] = _plain(share)
+    for item in closed:
+        item["adjusted_budget"] = None
+    year_end = spent + sum(open_costs, Decimal(0))
+    return {
+        "months_closed": len(closed),
+        "trend": float(round(trend, 4)) if trend is not None else None,
+        "price": _plain(actual_price, 4),
+        "year_end": _plain(year_end),
+        "variance": _plain(year_end - annual),
+        "remaining": _plain(remaining),
     }
 
 
 # ------------------------------------------------------------------ Power BI
 FACT_COLUMNS = ["Year", "Month", "MonthStart", "SiteName", "EnergyType", "AnnualBudget", "EstimatedKWh", "EstimatedPrice",
                 "EstimatedCost", "PlannedBudget", "ActualKWh", "ActualCost", "AdoptedCost", "PriorCarry", "AvailableBudget",
-                "MonthBalance", "DataStatus", "BudgetMethod"]
+                "MonthBalance", "DataStatus", "BudgetMethod", "ForecastKWh", "ForecastCost", "AdjustedBudget"]
 ACTUAL_COLUMNS = ["Year", "Month", "MonthStart", "SiteName", "ActualKWh", "ActualCost", "GreyKWh", "GreyCost",
                   "SolarKWh", "SolarCost", "WindKWh", "WindCost"]
 
@@ -215,6 +276,7 @@ def fact_rows(planned: Mapping[str, Any]) -> list[list[Any]]:
                     month["prior_carry"], month["available"], month["balance"], "Actual" if month["has_actual"] else "Estimated",
                     ("Approved" if item["method"] == "approved" else "Estimate") + {"estimate": "", "estimate + average": " / gaps at average",
                                                                                   "even": " / even"}[item["allocation"]],
+                    month["forecast_kwh"], month["forecast_cost"], month["adjusted_budget"],
                 ])
     return rows
 
