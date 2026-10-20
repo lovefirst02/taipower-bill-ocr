@@ -20,6 +20,8 @@ interface Props {
 export function UploadDialog({ sites, initialFiles, initialTarget, onCancel, onUpload }: Props) {
   const [files, setFiles] = useState<File[]>(initialFiles);
   const [target, setTarget] = useState<UploadTarget>(initialTarget);
+  // The site chosen in the list, kept when switching to another kind and back.
+  const [siteId, setSiteId] = useState<number | null>(typeof initialTarget === "number" ? initialTarget : sites[0]?.id ?? null);
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
@@ -30,10 +32,14 @@ export function UploadDialog({ sites, initialFiles, initialTarget, onCancel, onU
     setOver(false);
     add(Array.from(event.dataTransfer.files));
   };
-  const choices: { value: UploadTarget; title: string; hint: string }[] = [
-    { value: null, title: "台電帳單", hint: "Each bill finds its site by its 電號 (Settings → Sites)." },
-    ...sites.map((site) => ({ value: site.id as UploadTarget, title: `Site: ${site.name}`, hint: "Every page goes to this site — e.g. a landlord's allocation, or bills without a 電號 of yours." })),
-    { value: "green" as UploadTarget, title: "綠電單據", hint: "Taipower's transfer fee lists, retailers' statements and purchase notices — they cover several sites; never read as Taipower bills." },
+  const kind = target === "green" ? "green" : typeof target === "number" ? "site" : "bill";
+  // A site may have been removed since it was last chosen.
+  const chosenSite = sites.some((site) => site.id === siteId) ? siteId : sites[0]?.id ?? null;
+  const choose = (next: "bill" | "site" | "green") => setTarget(next === "green" ? "green" : next === "site" ? chosenSite : null);
+  const choices: { value: "bill" | "site" | "green"; title: string; hint: string }[] = [
+    { value: "bill", title: "台電帳單", hint: "Each bill finds its site by its 電號 (Settings → Sites)." },
+    ...(sites.length ? [{ value: "site" as const, title: "指定 Site", hint: "Every page goes to the site chosen below, whatever its 電號 — e.g. a landlord's allocation." }] : []),
+    { value: "green", title: "綠電單據", hint: "Taipower's transfer fee lists, retailers' statements and purchase notices — they cover several sites; never read as Taipower bills." },
   ];
 
   return (
@@ -43,11 +49,18 @@ export function UploadDialog({ sites, initialFiles, initialTarget, onCancel, onU
         <h4>1. What are these files?</h4>
         <div className="upload-choices" role="radiogroup">
           {choices.map((choice) => (
-            <label key={String(choice.value)} className={`upload-choice${target === choice.value ? " chosen" : ""}`}>
-              <input type="radio" name="upload-target" checked={target === choice.value} onChange={() => setTarget(choice.value)} />
+            <label key={choice.value} className={`upload-choice${kind === choice.value ? " chosen" : ""}`}>
+              <input type="radio" name="upload-target" checked={kind === choice.value} onChange={() => choose(choice.value)} />
               <span>
                 <strong>{choice.title}</strong>
                 <small>{choice.hint}</small>
+                {choice.value === "site" && (
+                  <select value={chosenSite ?? ""} onClick={(event) => { event.stopPropagation(); if (kind !== "site") choose("site"); }}
+                    onChange={(event) => { setSiteId(Number(event.target.value)); setTarget(Number(event.target.value)); }}
+                    onFocus={() => choose("site")}>
+                    {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+                  </select>
+                )}
               </span>
             </label>
           ))}

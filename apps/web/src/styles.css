@@ -347,3 +347,4 @@ main { flex: 1; min-width: 0; display: flex; }
 .upload-files li:last-child { border-bottom: 0; }
 .upload-files .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-files .meta { color: var(--muted); font-size: 12px; }
+.upload-choice select { margin-top: 4px; max-width: 320px; padding: 3px 6px; font: inherit; font-size: 13px; }
