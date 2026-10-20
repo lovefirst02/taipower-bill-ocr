@@ -19,6 +19,10 @@ export interface MixTotal {
   grey_kwh_costed: number;
   green_cost_priced: number;
   green_kwh_costed: number;
+  /** The green cost by energy, and what gives each energy's price (cost and kWh where both are known). */
+  green_cost_by_energy: Record<string, number>;
+  priced_cost_by_energy: Record<string, number>;
+  priced_kwh_by_energy: Record<string, number>;
   /** Rows with green power but no bill (their grey power is unknown). */
   without_bill: number;
   /** Rows whose grey power is known: none means no bill at all. */
@@ -26,7 +30,7 @@ export interface MixTotal {
 }
 
 const empty = (): MixTotal => ({
-  grey_kwh: 0, green_kwh: {}, green_total: 0, total_kwh: 0, green_in_total: 0,
+  grey_kwh: 0, green_kwh: {}, green_cost_by_energy: {}, priced_cost_by_energy: {}, priced_kwh_by_energy: {}, green_total: 0, total_kwh: 0, green_in_total: 0,
   grey_cost: 0, green_cost: 0, grey_cost_priced: 0, grey_kwh_costed: 0, green_cost_priced: 0, green_kwh_costed: 0, without_bill: 0, with_bill: 0,
 });
 
@@ -53,6 +57,14 @@ export function total(rows: MixRow[]): MixTotal {
         sum.grey_kwh_costed = add(sum.grey_kwh_costed, row.grey_kwh);
       }
     }
+    for (const [energy, cost] of Object.entries(row.green_cost_by_energy ?? {})) {
+      sum.green_cost_by_energy[energy] = add(sum.green_cost_by_energy[energy] ?? 0, cost);
+      const kwh = row.green_kwh[energy];
+      if (kwh) {
+        sum.priced_cost_by_energy[energy] = add(sum.priced_cost_by_energy[energy] ?? 0, cost);
+        sum.priced_kwh_by_energy[energy] = add(sum.priced_kwh_by_energy[energy] ?? 0, kwh);
+      }
+    }
     if (row.green_cost !== null) {
       sum.green_cost = add(sum.green_cost, row.green_cost);
       // A cost without kWh (a notice without Taipower's list) has no unit price.
@@ -68,6 +80,11 @@ export function total(rows: MixRow[]): MixTotal {
 /** The green share of the usage whose grey power is known; null without any. */
 export function greenShare(sum: MixTotal): number | null {
   return sum.total_kwh ? sum.green_in_total / sum.total_kwh : null;
+}
+
+/** One energy's own NT$ per kWh (solar, wind ...). */
+export function energyPrice(sum: MixTotal, energy: string): number | null {
+  return unitPrice(sum.priced_cost_by_energy[energy] ?? 0, sum.priced_kwh_by_energy[energy] ?? 0);
 }
 
 /** NT$ per kWh; null when there is nothing to divide. */

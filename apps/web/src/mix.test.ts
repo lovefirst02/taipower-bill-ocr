@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { energies, greenShare, groupBy, total, unitPrice } from "./mix";
+import { energies, energyPrice, greenShare, groupBy, total, unitPrice } from "./mix";
 import type { MixRow } from "./types";
 
 const row = (values: Partial<MixRow>): MixRow => ({
   month: "2026-08", meter: "1", document: null, site: "A", site_code: null, entity: null, grey_kwh: null, green_kwh: {},
-  green_total: 0, total_kwh: null, green_share: null, grey_cost: null, green_cost: null, green_source: null, ...values,
+  green_total: 0, total_kwh: null, green_share: null, grey_cost: null, green_cost: null, green_cost_by_energy: {}, green_source: null, ...values,
 });
 
 describe("dashboard totals", () => {
@@ -25,6 +25,17 @@ describe("dashboard totals", () => {
   it("counts the green share only where the grey power is known", () => {
     expect(greenShare(total(rows))).toBeCloseTo(5000 / 20300);
     expect(greenShare(total([rows[1]]))).toBeNull();
+  });
+
+  it("works out each energy's own price", () => {
+    const sum = total([
+      row({ green_kwh: { 太陽能: 575841 }, green_total: 575841, green_cost: 3459211, green_cost_by_energy: { 太陽能: 3459211 } }),
+      row({ meter: "2", green_kwh: { 風力: 196353 }, green_total: 196353, green_cost: 1351591, green_cost_by_energy: { 風力: 1351591 } }),
+      row({ meter: "3", green_cost: 500, green_cost_by_energy: { 風力: 500 } }),  // no kWh: not in the price
+    ]);
+    expect(sum.green_cost_by_energy).toEqual({ 太陽能: 3459211, 風力: 1352091 });
+    expect(energyPrice(sum, "太陽能")).toBe(6.0072);
+    expect(energyPrice(sum, "風力")).toBe(6.8835);
   });
 
   it("works out unit prices", () => {

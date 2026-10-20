@@ -310,6 +310,8 @@ export interface MixRow {
   green_share: number | null;
   grey_cost: number | null;
   green_cost: number | null;
+  /** The green cost by energy (太陽能, 風力 ...), for each one's own price. */
+  green_cost_by_energy: Record<string, number>;
   green_source: "transfer_list" | "statement" | "bill" | null;
 }
 

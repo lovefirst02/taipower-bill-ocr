@@ -32,7 +32,8 @@ SOLAR, WIND, UNCLASSIFIED = "太陽能", "風力", "未分類"
 _BILLED_KWH = [f"計費度數_{label}" for label in ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")]
 MIX_COLUMNS = [
     "月份", "Entity", "據點", "據點代碼", "電號", "灰電度數", "太陽能度數", "風力度數", "其他綠電度數", "未分類綠電度數",
-    "綠電度數合計", "總用電度數", "綠電占比", "灰電費用（台電稅前）", "綠電費用（售電業者未稅）", "綠電度數來源",
+    "綠電度數合計", "總用電度數", "綠電占比", "灰電費用（台電稅前）", "綠電費用（售電業者未稅）",
+    "太陽能費用", "太陽能每度", "風力費用", "風力每度", "其他綠電費用", "綠電度數來源",
 ]
 SOURCE_NAMES = {"transfer_list": "台電轉供清單", "statement": "售電業者明細", "bill": "台電帳單轉供度數"}
 
@@ -112,12 +113,19 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 "entity": entity_names.get(site.get("entity_id")),
                 "grey_kwh": None, "bill_green_kwh": None, "grey_cost": None,
                 "list": defaultdict(Decimal), "statement": defaultdict(Decimal), "green_cost": None,
+                "cost_by_energy": defaultdict(Decimal),
             }
         return entries[key]
 
     def add(target: dict[str, Any], name: str, value: Decimal | None) -> None:
         if value is not None:
             target[name] = (target[name] or Decimal(0)) + value
+
+    def add_green_cost(target: dict[str, Any], energy: str, value: Decimal | None) -> None:
+        """A green cost, also under its energy (solar, wind) for each one's own price."""
+        if value is not None:
+            add(target, "green_cost", value)
+            target["cost_by_energy"][energy] += value
 
     # Taipower bills and other documents: grey kWh and cost per month.
     for page in pages:
@@ -185,6 +193,12 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 list_kwh[(month, statement.get("service"))][row["user_meter"]] += kwh
         elif kind == green.STATEMENT:
             kwh_by_meter: dict[str, Decimal] = defaultdict(Decimal)
+            # Surcharges (餘電加收) and fees belong to the energy the meter got.
+            energy_of_meter: dict[str, str] = {}
+            for line in statement.get("lines") or []:
+                if line.get("meter") and is_green(line):
+                    energy_of_meter.setdefault(line["meter"], energy_name(line.get("energy")))
+            main_energy = next(iter(energy_of_meter.values()), UNCLASSIFIED)
             for line in statement.get("lines") or []:
                 meter = line.get("meter")
                 if not meter or (ours and meter not in ours):
@@ -193,7 +207,8 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 if is_green(line) and _number(line.get("kwh")) is not None:
                     target["statement"][energy_name(line.get("energy"))] += _number(line["kwh"])
                     kwh_by_meter[meter] += _number(line["kwh"])
-                add(target, "green_cost", _number(line.get("cost")))
+                line_energy = energy_name(line.get("energy")) if is_green(line) else energy_of_meter.get(meter, main_energy)
+                add_green_cost(target, line_energy, _number(line.get("cost")))
             # Fees outside the table (交易手續費), shared by kWh.
             fee = _number((statement.get("charges") or {}).get("fee"))
             if fee and sum(kwh_by_meter.values()):
@@ -202,7 +217,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 largest = max(shares, key=lambda meter: kwh_by_meter[meter])
                 shares[largest] += fee - sum(shares.values())
                 for meter, share in shares.items():
-                    add(entry(month, meter), "green_cost", share)
+                    add_green_cost(entry(month, meter), energy_of_meter.get(meter, main_energy), share)
 
     # A retailer's notice is for one company of the group: its cost is that
     # company's kWh in Taipower's list × the notice's price (untaxed ÷ B),
@@ -237,7 +252,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 counted["note"] = "找不到同月同服務編號、屬於這個 Entity 的台電轉供清單列，費用無法分到電號"
                 notes.append(f"{page.get('filename')}: {counted['note']}")
                 if not meters:
-                    add(entry(month, f"服務 {service or '?'}"), "green_cost", cost)
+                    add_green_cost(entry(month, f"服務 {service or '?'}"), service_energy_of(month, service, []), cost)
                     counted.update(counted_kwh=None, counted_cost=_plain(cost))
                 continue
             ours_kwh = sum(targets.values())
@@ -246,8 +261,9 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
             # Rounding leftovers go to the largest share so the parts add up.
             largest = max(shares, key=lambda meter: targets[meter])
             shares[largest] += total - sum(shares.values())
+            energy = service_energy_of(month, service, targets)
             for meter, share in shares.items():
-                add(entry(month, meter), "green_cost", share)
+                add_green_cost(entry(month, meter), energy, share)
             counted.update(counted_kwh=_plain(ours_kwh), counted_cost=_plain(total),
                            unit_price=float(round(cost / bought, 6)) if bought else None)
 
@@ -276,6 +292,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
             "green_share": float(round(green_kwh / total, 4)) if total else None,
             "grey_cost": _plain(item["grey_cost"]),
             "green_cost": _plain(item["green_cost"]),
+            "green_cost_by_energy": {energy: _plain(cost) for energy, cost in sorted(item["cost_by_energy"].items()) if cost},
             "green_source": source,
         })
     return {
@@ -345,16 +362,25 @@ def _ledger_entry(page: Mapping[str, Any], ours: set[str], duplicate_of: Mapping
     return entry
 
 
+def _price(cost: Any, kwh: Any) -> float | None:
+    """NT$ per kWh, to 4 places."""
+    return round(cost / kwh, 4) if cost and kwh else None
+
+
 def mix_rows(pages: Iterable[Mapping[str, Any]], store: Store, service_energy: Mapping[str, str]) -> list[list[Any]]:
     """The EnergyMix sheet."""
     sheet = []
     for row in energy_mix(pages, store, service_energy)["rows"]:
         kwh = row["green_kwh"]
+        costs = row["green_cost_by_energy"]
         other = sum(value for energy, value in kwh.items() if energy not in (SOLAR, WIND, UNCLASSIFIED))
         sheet.append([
             row["month"], row["entity"], row["site"], row["site_code"], row["meter"] or row["document"], row["grey_kwh"], kwh.get(SOLAR), kwh.get(WIND),
             other or None, kwh.get(UNCLASSIFIED), row["green_total"], row["total_kwh"], row["green_share"],
-            row["grey_cost"], row["green_cost"], SOURCE_NAMES.get(row["green_source"] or ""),
+            row["grey_cost"], row["green_cost"],
+            costs.get(SOLAR), _price(costs.get(SOLAR), kwh.get(SOLAR)), costs.get(WIND), _price(costs.get(WIND), kwh.get(WIND)),
+            sum(value for energy, value in costs.items() if energy not in (SOLAR, WIND)) or None,
+            SOURCE_NAMES.get(row["green_source"] or ""),
         ])
     return sheet
 

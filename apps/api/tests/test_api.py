@@ -1149,6 +1149,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((ours["month"], ours["site"], ours["grey_kwh"], ours["green_kwh"], ours["total_kwh"], ours["green_source"]),
                          ("2026-08", "彰化廠", 15000, {"太陽能": 556983}, 15000 + 556983, "transfer_list"))
         self.assertEqual(ours["green_share"], round(556983 / (15000 + 556983), 4))
+        self.assertEqual(list(ours["green_cost_by_energy"]), ["太陽能"])
         # The notice's untaxed total is shared by kWh and adds up exactly.
         self.assertEqual(rows["05785193319"]["grey_kwh"], None)  # no bill for that meter
         self.assertEqual(round(rows["05785193319"]["green_cost"] + ours["green_cost"], 2), 3809716)
@@ -1158,6 +1159,7 @@ class ApiTests(unittest.TestCase):
         header = [cell.value for cell in workbook["EnergyMix"][1]]
         sheet = {row[header.index("電號")]: dict(zip(header, row)) for row in workbook["EnergyMix"].iter_rows(min_row=2, values_only=True)}
         self.assertEqual((sheet["05785204210"]["灰電度數"], sheet["05785204210"]["太陽能度數"]), (15000, 556983))
+        self.assertEqual(sheet["05785204210"]["太陽能每度"], round(ours["green_cost"] / 556983, 4))
 
     def test_a_document_uploaded_twice_is_counted_once(self):
         self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
@@ -1221,6 +1223,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.first_item("Amy")["total"], 2447210)
         mix = self.client.get("/api/dashboard").json()
         self.assertEqual(round(sum(row["green_cost"] or 0 for row in mix["rows"]), 2), 2447210)
+        # The 餘電加收 line and the fee are wind's too.
+        self.assertEqual(round(sum(sum(row["green_cost_by_energy"].values()) for row in mix["rows"]), 2), 2447210)
+        self.assertEqual({energy for row in mix["rows"] for energy in row["green_cost_by_energy"]}, {"風力"})
         # A wrong total is pointed out; edits keep the charges.
         saved = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {
             "period": "113/01/01~113/01/31", "lines": green_view["lines"], "charges": {"fee": "12", "tax": "122,361", "total": "2,569,000"}}}).json()

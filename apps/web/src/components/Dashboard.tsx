@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import { energies, greenShare, groupBy, total, unitPrice, SOLAR, UNCLASSIFIED, WIND } from "../mix";
+import { energies, energyPrice, greenShare, groupBy, total, unitPrice, SOLAR, UNCLASSIFIED, WIND } from "../mix";
 import type { MixTotal } from "../mix";
 import type { EnergyMix, MixDocument, MixRow } from "../types";
 
@@ -82,7 +82,8 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
             <Kpi label="Total usage" value={sum.with_bill ? `${kwh(sum.total_kwh)} kWh` : "—"} note={sum.with_bill ? "where the bill is in" : "no bills yet"} />
             <Kpi label="Grey power 灰電" value={sum.with_bill ? `${kwh(sum.grey_kwh)} kWh` : "—"} color={GREY} />
             {kinds.map((energy) => (
-              <Kpi key={energy} label={`${energy}`} value={`${kwh(sum.green_kwh[energy])} kWh`} color={colorOf(energy, kinds)} />
+              <Kpi key={energy} label={`${energy}`} value={`${kwh(sum.green_kwh[energy])} kWh`} color={colorOf(energy, kinds)}
+                note={sum.green_cost_by_energy[energy] ? `${money(sum.green_cost_by_energy[energy])} · ${price(energyPrice(sum, energy))} NT$/kWh` : undefined} />
             ))}
             <Kpi label="Green share 綠電占比" value={percent(greenShare(sum))} />
             <Kpi label="Grey cost (before tax)" value={sum.with_bill ? money(sum.grey_cost) : "—"} note={`${price(unitPrice(sum.grey_cost_priced, sum.grey_kwh_costed))} NT$/kWh`} />
@@ -212,6 +213,7 @@ function TotalsTable({ groups, overall, kinds, first }: { groups: [string, MixTo
           <tr>
             <th>{first}</th><th>灰電 kWh</th>{kinds.map((energy) => <th key={energy}>{energy} kWh</th>)}
             <th>綠電 kWh</th><th>Total kWh</th><th>綠電占比</th><th>灰電費用</th><th>灰電 NT$/kWh</th><th>綠電費用</th><th>綠電 NT$/kWh</th>
+            {kinds.map((energy) => [<th key={`${energy}-cost`}>{energy}費用</th>, <th key={`${energy}-price`}>{energy} NT$/kWh</th>])}
           </tr>
         </thead>
         <tbody>
@@ -227,6 +229,10 @@ function TotalsTable({ groups, overall, kinds, first }: { groups: [string, MixTo
               <td className="num">{price(unitPrice(sum.grey_cost_priced, sum.grey_kwh_costed))}</td>
               <td className="num">{money(sum.green_cost)}</td>
               <td className="num">{price(unitPrice(sum.green_cost_priced, sum.green_kwh_costed))}</td>
+              {kinds.map((energy) => [
+                <td key={`${energy}-cost`} className="num">{sum.green_cost_by_energy[energy] ? money(sum.green_cost_by_energy[energy]) : "—"}</td>,
+                <td key={`${energy}-price`} className="num">{price(energyPrice(sum, energy))}</td>,
+              ])}
             </tr>
           ))}
         </tbody>
