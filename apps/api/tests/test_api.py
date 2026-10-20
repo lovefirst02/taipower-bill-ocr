@@ -70,6 +70,25 @@ def landlord_statement():
     return statement
 
 
+def green_statement():
+    """A retailer's green power statement (the table only; no Taipower wording)."""
+    statement = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+    header = [("使用電號", 150), ("能源別", 440), ("基準價", 640), ("電能轉供費率", 830), ("憑證費率", 1050), ("每度單價", 1265), ("轉供度數", 1485), ("本月電費", 1710)]
+    rows = [
+        ("10512918917", "風能", "5.8000", "0.30520", "0.00000", "6.1052", "36,145", "220,671"),
+        ("10512918917", "風能", "5.8000", "0.30520", "0.00000", "6.1052", "242,478", "1,480,377"),
+        ("10512918918", "風能", "5.9000", "0.30520", "0.00000", "6.2052", "120,208", "745,913"),
+        ("10512918917", "餘電加收", "3.0331", "0.00000", "0.00000", "3.0331", "78", "237"),
+    ]
+    xs = (125, 455, 640, 838, 1052, 1288, 1505, 1722)
+    lines = [OcrLine("本月消費明細如下：", 40, 90, 260, 34, None)]
+    lines += [OcrLine(text, x, 220, len(text) * 32, 36, None) for text, x in header]
+    for index, row in enumerate(rows):
+        lines += [OcrLine(text, x, 320 + index * 100, len(text) * 18, 34, None) for text, x in zip(row, xs)]
+    statement.ocr_lines = lines
+    return statement
+
+
 def energy_saving_page():
     """A bill's back page: the 節電資訊 table with this period's usage."""
     page = BillResult({
@@ -837,6 +856,72 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(sum(row["應繳總金額"] for row in rows), 800000)
         self.assertEqual(sum(row["用電度數"] for row in rows), 8000 + 3000 + 3000 + 1000)
         self.assertEqual(sum(row["稅前應繳總金額"] for row in rows), 761905)
+
+    def upload_green(self, user="Amy"):
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: green_statement()):
+            self.upload(user, "green.png")
+        item_id = next(item["id"] for item in self.client.get("/api/items", params={"user": user}).json() if item["filename"] == "green.png")
+        return self.client.get(f"/api/items/{item_id}").json()
+
+    def test_green_power_statement_is_read_and_checked(self):
+        detail = self.upload_green()
+        self.assertEqual(detail["kind"], "green")
+        statement = detail["green"]
+        self.assertEqual([line["meter"] for line in statement["lines"]], ["10512918917", "10512918917", "10512918918", "10512918917"])
+        self.assertEqual([line["check"]["difference"] for line in statement["lines"]], [-1, 0, -2, 0])
+        self.assertEqual({line["check"]["status"] for line in statement["lines"]}, {"ok"})
+        self.assertEqual(statement["total_cost"], 220671 + 1480377 + 745913 + 237)
+        self.assertEqual(statement["total_kwh"], 36145 + 242478 + 120208)  # 餘電加收 is not green power
+        labels = {mark["text"] for mark in detail["marks"] if mark["type"] == "label"}
+        self.assertEqual(labels, {"Green Electricity (kWh)", "Green Electricity Cost"})
+        self.assertTrue(any("period not found" in issue["en"] for issue in detail["issues"]))
+        self.assertEqual(self.first_item("Amy")["kind"], "green")
+
+    def test_edited_lines_are_checked_again(self):
+        detail = self.upload_green()
+        lines = detail["green"]["lines"]
+        lines[0]["cost"] = "230,000"  # typed with a comma
+        saved = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {"period": "113/01/01~113/01/31", "lines": lines}}).json()
+        first = saved["green"]["lines"][0]
+        self.assertEqual((first["cost"], first["check"]["status"], first["check"]["difference"]), (230000, "check", 230000 - 220672))
+        self.assertEqual(saved["row"]["Billing Period 計費期間"], "113/01/01~113/01/31")
+        self.assertTrue(any("Line 1" in issue["en"] for issue in saved["issues"]))
+        self.assertFalse(any("period not found" in issue["en"] for issue in saved["issues"]))
+        # A larger allowance accepts it.
+        self.local_client().put("/api/settings", json={"values": {"green_tolerance": 10000}})
+        again = self.client.get(f"/api/items/{detail['id']}").json()
+        self.assertEqual(again["green"]["lines"][0]["check"]["status"], "ok")
+        bad = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {"lines": [{"kwh": "abc"}]}})
+        self.assertEqual(bad.status_code, 400)
+
+    def test_transferred_kwh_is_compared_with_the_taipower_bill(self):
+        bill = official_sample_bill()
+        bill["user_info"]["customer_number"] = "10512918917"
+        bill["user_info"]["billing_period"] = {"start": "113/01/01", "end": "113/01/31"}
+        bill["user_info"]["transferred_energy"] = {"peak_kwh": 200000, "semi_peak_kwh": 50000, "saturday_semi_peak_kwh": 20000, "off_peak_kwh": 8623}
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: bill):
+            self.upload("Amy", "taipower.png")
+        detail = self.upload_green()
+        saved = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {"period": "113/01/01~113/01/31", "lines": detail["green"]["lines"]}}).json()
+        checks = {entry["meter"]: entry for entry in saved["green"]["crosscheck"]}
+        same = checks["10512918917"]
+        self.assertEqual((same["statement_kwh"], same["taipower_kwh"], same["difference"], same["how"]), (278623, 278623, 0, "same period"))
+        self.assertEqual(checks["10512918918"]["how"], "none")
+        # A bill over another period is prorated by days, and said so.
+        half = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {"period": "113/01/01~113/01/15", "lines": detail["green"]["lines"]}}).json()
+        prorated = {entry["meter"]: entry for entry in half["green"]["crosscheck"]}["10512918917"]
+        self.assertEqual((prorated["how"], prorated["taipower_kwh"]), ("prorated", round(278623 * 15 / 31)))
+
+        self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy"})
+        book = load_workbook(self.settings.report_workbook)
+        self.assertEqual(book["Bills"].max_row, 1)  # statements are not bills
+        header = [cell.value for cell in book["GreenPower"][1]]
+        rows = [dict(zip(header, line)) for line in book["GreenPower"].iter_rows(min_row=2, values_only=True)]
+        self.assertEqual(sum(row["本月電費"] for row in rows), 220671 + 1480377 + 745913 + 237)
+        self.assertEqual({row["月份"] for row in rows}, {"2024-01"})
+        header = [cell.value for cell in book["GreenCheck"][1]]
+        checks = [dict(zip(header, line)) for line in book["GreenCheck"].iter_rows(min_row=2, values_only=True)]
+        self.assertEqual({row["電號"]: row["比對方式"] for row in checks}["10512918918"], "找不到同電號的台電帳單")
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

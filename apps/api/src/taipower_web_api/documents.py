@@ -29,7 +29,7 @@ from .settings import KEYWORD_SETTINGS, Settings
 from .store import Store
 
 TAIPOWER, OTHER = "taipower", "other"
-DOCUMENT_TYPES = {TAIPOWER: "台電帳單", OTHER: "其他單據"}
+DOCUMENT_TYPES = {TAIPOWER: "台電帳單", OTHER: "其他單據", "green": "綠電明細"}
 
 # Where a value came from.
 SOURCES = {
@@ -151,4 +151,6 @@ def source_text(kind: str | None, sources: dict[str, str] | None) -> str:
     parts = [f"{_NAMES.get(column, (column, column))[1]}:{SOURCES.get(source, source)}" for column, source in sources.items()]
     if (kind or TAIPOWER) == TAIPOWER:
         parts.append(f"其他:{SOURCES['taipower']}")
+    elif kind == "green" and not parts:
+        parts.append("明細表辨識")
     return "；".join(parts)

@@ -42,6 +42,7 @@ EDITABLE: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "workbook_retry_seconds": ("TAIPOWER_WORKBOOK_RETRY_SECONDS", float),
     "host": ("TAIPOWER_HOST", lambda value: str(value).strip()),
     "port": ("TAIPOWER_PORT", int),
+    "green_tolerance": ("TAIPOWER_GREEN_TOLERANCE", float),
     "highlight_color": ("TAIPOWER_HIGHLIGHT_COLOR", lambda value: str(value).strip().lower()),
     "label_color": ("TAIPOWER_LABEL_COLOR", lambda value: str(value).strip().lower()),
     **{key: (f"TAIPOWER_{key.upper()}", _words) for key in KEYWORD_SETTINGS},
@@ -70,6 +71,9 @@ class Settings:
     # 127.0.0.1: this PC only; 0.0.0.0: every computer on the network.
     host: str = "127.0.0.1"
     port: int = 8765
+    # A green power statement line may differ this much (NT$) from kWh × rates:
+    # retailers round finer amounts (time-of-use, intervals) one by one.
+    green_tolerance: float = 3
     # Evidence marks without a colour of their own: highlighter and red pen.
     highlight_color: str = "#ffeb3b"
     label_color: str = "#d32f2f"
@@ -100,6 +104,8 @@ class Settings:
             raise ValueError("host is required")
         if not str(self.output_dir).strip() or str(self.output_dir) == ".":
             raise ValueError("output folder is required")
+        if not 0 <= self.green_tolerance <= 100000:
+            raise ValueError("green power tolerance must be between 0 and 100000 NT$")
         for name in ("highlight_color", "label_color"):
             if not COLOR.match(getattr(self, name)):
                 raise ValueError(f"{name.replace('_', ' ')} must look like #ffeb3b")

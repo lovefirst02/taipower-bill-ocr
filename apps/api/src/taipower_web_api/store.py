@@ -77,6 +77,7 @@ _JSON_COLUMNS = {
     "mark_notes_json": "mark_notes",
     "dataset_json": "dataset",
     "sources_json": "sources",
+    "green_json": "green",
 }
 
 
@@ -121,6 +122,7 @@ class Store:
         for name, definition in (
             ("hidden", "INTEGER NOT NULL DEFAULT 0"), ("evidence_file", "TEXT"), ("kind", "TEXT"), ("sources_json", "TEXT"),
             ("site_id", "INTEGER"),  # chosen by hand; otherwise found from the 電號
+            ("green_json", "TEXT"),  # a green power statement's period and lines
         ):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")

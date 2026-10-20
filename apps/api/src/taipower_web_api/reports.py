@@ -23,7 +23,7 @@ from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_m
 
 from taipower_bill_ocr.periods import split_by_month
 
-from . import documents
+from . import documents, green
 from .store import Store, meter_number
 
 UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出者", "送出時間", "狀態", "證據檔"
@@ -203,7 +203,34 @@ def monthly_rows(pages: Iterable[Mapping[str, Any]], store: Store, output_dir: P
     return rows
 
 
-def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = None) -> bytes:
+def _is_green(page: Mapping[str, Any]) -> bool:
+    return page.get("kind") == green.GREEN
+
+
+def green_common(output_dir: Path | None):
+    """The columns a green power line shares with its statement."""
+    def common(page: Mapping[str, Any]) -> dict[str, Any]:
+        base = dict(zip(REPORT_COLUMNS, report_row(page, output_dir)))
+        return {key: base[key] for key in ("來源檔案", STATUS, UPLOADER, SUBMITTER, EVIDENCE)} | {"來源檔案": page.get("filename")}
+    return common
+
+
+def report_tables(pages: list[Mapping[str, Any]], store: Store, output_dir: Path | None, tolerance: float) -> dict[str, tuple[list[str], list[list[Any]]]]:
+    """The report workbook's sheets: bills, their months, and green power statements."""
+    bills = [page for page in pages if not _is_green(page)]
+    statements = [page for page in pages if _is_green(page)]
+    return {
+        "Bills": (REPORT_COLUMNS, [report_row(page, output_dir) for page in bills]),
+        # Each bill per site and calendar month, split by days.
+        "Monthly": (MONTHLY_COLUMNS, monthly_rows(bills, store, output_dir)),
+        # Green power statements: each line per month with its check, and
+        # each meter's transferred kWh against its Taipower bills.
+        "GreenPower": (green.GREEN_COLUMNS, green.green_rows(statements, store, tolerance, green_common(output_dir))),
+        "GreenCheck": (green.CHECK_COLUMNS, green.check_rows(statements, store)),
+    }
+
+
+def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = None, tolerance: float = 3) -> bytes:
     """A 17-column workbook of the given bill pages, for download (and their months)."""
     from openpyxl import Workbook
 
@@ -213,12 +240,16 @@ def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = No
     sheet.title = "電費帳單"
     sheet.append(REPORT_COLUMNS)
     for page in pages:
-        sheet.append(report_row(page))
+        if not _is_green(page):
+            sheet.append(report_row(page))
     if store is not None:
-        months = workbook.create_sheet("Monthly")
-        months.append(MONTHLY_COLUMNS)
-        for line in monthly_rows(pages, store):
-            months.append(line)
+        tables = report_tables(pages, store, None, tolerance)
+        for name in ("Monthly", "GreenPower", "GreenCheck"):
+            columns, rows = tables[name]
+            extra = workbook.create_sheet(name)
+            extra.append(columns)
+            for line in rows:
+                extra.append(line)
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -281,6 +312,31 @@ _DOCUMENT_FIELDS = {
 _SOURCE_STATUS = {"keyword": "found_by_keyword", "pick": "picked_by_reviewer", "manual": "entered_by_reviewer"}
 
 
+def green_record(page: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
+    """The master's record of a green power statement: one field per line value."""
+    record = copy.deepcopy(dict(page["dataset"]))
+    statement = page.get("green") or {}
+    for index, line in enumerate(statement.get("lines") or [], start=1):
+        box = line.get("box")
+        for name in green.EDITABLE_FIELDS:
+            if line.get(name) is None:
+                continue
+            record["fields"].append({
+                "block": "green_power", "block_label": "綠電明細", "key": f"line{index}.{name}", "label": name,
+                "printed_label": None, "value": line[name], "recognized": True, "status": "reviewed",
+                "confidence": "reviewed", "checks": None, "cross_check_value": None,
+                "source": f"statement:{reviewer}", "origin": "statement",
+                "bbox": dict(zip(("x", "y", "width", "height"), box)) if box else None,
+            })
+    start, end = _split_period(statement.get("period"))
+    record["summary"].update(
+        document_type="green_power_statement", billing_period_start=start, billing_period_end=end,
+        total_amount_twd=sum(line.get("cost") or 0 for line in statement.get("lines") or []),
+        needs_review=False, confidence_review=0,
+    )
+    return record
+
+
 def document_record(page: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
     """The master's record of a document that is not a Taipower bill.
 
@@ -312,7 +368,7 @@ def document_record(page: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
     return record
 
 
-def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> list[str]:
+def write_workbooks(store: Store, output_dir: Path, user: str | None = None, tolerance: float = 3) -> list[str]:
     """Rebuild both workbooks from submitted bills.
 
     With ``user`` only that user's bills are written, into their own folder
@@ -324,12 +380,7 @@ def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> 
     target_dir = workbook_dir(output_dir, user)
 
     report = target_dir / "taipower_bills_17.xlsx"
-    tables = {
-        "Bills": (REPORT_COLUMNS, [report_row(page, output_dir) for page in submitted]),
-        # Each bill per site and calendar month, split by days.
-        "Monthly": (MONTHLY_COLUMNS, monthly_rows(submitted, store, output_dir)),
-    }
-    if not save_tables(report, tables):
+    if not save_tables(report, report_tables(submitted, store, output_dir, tolerance)):
         locked.append(report.name)
 
     sheets = empty_sheets()
@@ -340,7 +391,9 @@ def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> 
         upload = store.upload(upload_id)
         corrected = {
             page["id"]: (
-                document_record(page, page["submitted_by"] or page["user"])
+                green_record(page, page["submitted_by"] or page["user"])
+                if _is_green(page)
+                else document_record(page, page["submitted_by"] or page["user"])
                 if page.get("kind") == documents.OTHER
                 else apply_corrections(page["dataset"], page["ocr_row"], page["row"], page["submitted_by"] or page["user"])
             )
@@ -386,8 +439,10 @@ class WorkbookWriter:
     is then given the user whose bills changed.
     """
 
-    def __init__(self, store: Store, output_dir: Path, retry_seconds: float = 60, per_user: bool = False) -> None:
+    def __init__(self, store: Store, output_dir: Path, retry_seconds: float = 60, per_user: bool = False, tolerance: float = 3) -> None:
         self.store = store
+        # Green power statements' allowed difference, for their checks.
+        self.tolerance = tolerance
         self.output_dir = output_dir
         self.retry_seconds = retry_seconds
         self.per_user = per_user
@@ -418,7 +473,7 @@ class WorkbookWriter:
         """Rebuild the workbooks now; returns the ones that were locked."""
         key = user if self.per_user else None
         with self._lock:
-            locked = write_workbooks(self.store, self.output_dir, key)
+            locked = write_workbooks(self.store, self.output_dir, key, self.tolerance)
             if locked:
                 self._pending.add(key)
                 log.warning("%s open elsewhere; retrying every %ss", ", ".join(locked), self.retry_seconds)

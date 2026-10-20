@@ -28,7 +28,7 @@ from taipower_bill_ocr.excel_export import (
 
 from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
 
-from . import documents, evidence
+from . import documents, evidence, green
 from .reports import month_shares
 from .reports import (
     WorkbookWriter,
@@ -83,6 +83,8 @@ class ItemUpdate(BaseModel):
     mark_notes: list[str] | None = None
     # The site chosen by hand; null goes back to the one its 電號 belongs to.
     site_id: int | None = None
+    # A green power statement as reviewed: {"period": ..., "lines": [...]}.
+    green: dict[str, Any] | None = None
 
 
 class Site(BaseModel):
@@ -145,7 +147,7 @@ def create_app(
     settings = settings or Settings.from_env()
     store = Store(settings.database)
     worker = OcrWorker(store, settings, extractor_factory)
-    writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds, settings.per_user_workbooks)
+    writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds, settings.per_user_workbooks, settings.green_tolerance)
     # Choosing a free evidence file name and writing it is one step.
     evidence_lock = threading.Lock()
 
@@ -175,6 +177,21 @@ def create_app(
 
     def marks_of(page: dict[str, Any]) -> list[dict[str, Any]]:
         return page["marks"] or []
+
+    def green_view(page: dict[str, Any]) -> dict[str, Any] | None:
+        """A green power statement's lines with their checks, and the Taipower cross-check."""
+        if page.get("kind") != green.GREEN:
+            return None
+        statement = page.get("green") or {}
+        lines = green.checked_lines(statement, settings.green_tolerance)
+        return {
+            "period": statement.get("period"),
+            "lines": lines,
+            "tolerance": settings.green_tolerance,
+            "total_kwh": sum(line.get("kwh") or 0 for line in lines if line["green"]),
+            "total_cost": sum(line.get("cost") or 0 for line in lines),
+            "crosscheck": green.crosscheck(store, page),
+        }
 
     def view_pages(page: dict[str, Any]) -> list[dict[str, Any]]:
         """Every page of the bill in document order; any of them can hold marks."""
@@ -400,7 +417,9 @@ def create_app(
                 "issue_count": len(page["issues"] or []),
                 "billing_period": row.get("Billing Period 計費期間"),
                 "customer_number": row.get("Custom No. 電號"),
-                "total": row.get("應繳總金額"),
+                "total": row.get("應繳總金額") if page.get("kind") != green.GREEN else sum(
+                    line.get("cost") or 0 for line in (page.get("green") or {}).get("lines") or []
+                ),
                 "kind": page.get("kind") or documents.TAIPOWER,
                 "site": (store.site_of(page) or {}).get("name"),
                 "submitted_at": page["submitted_at"],
@@ -429,7 +448,8 @@ def create_app(
             "sources": page.get("sources") or {},
             "site": store.site_of(page),
             # The bill per calendar month (split by days), as saved.
-            "months": month_shares(page),
+            "months": month_shares(page) if page.get("kind") != green.GREEN else [],
+            "green": green_view(page),
             "pages": [
                 {
                     "page": shown["page_number"],
@@ -467,6 +487,21 @@ def create_app(
             values["row"] = row
         if update.marks is not None:
             values["marks"] = [mark.model_dump(exclude_none=True) for mark in update.marks]
+        if update.green is not None:
+            if page.get("kind") != green.GREEN:
+                raise HTTPException(409, "only a green power statement has lines")
+            try:
+                lines = green.clean_lines(update.green.get("lines") or [])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
+            period = (str(update.green.get("period") or "").strip()) or None
+            statement = {"period": period, "lines": lines}
+            values["green"] = statement
+            row = dict(values.get("row") or page["row"] or {})
+            row["Billing Period 計費期間"] = period
+            values["row"] = row
+            values["issues"] = green.issues_of(statement, settings)
+            page = {**page, "issues": values["issues"]}
         if update.issues is not None:
             # Only warnings the item has can be kept: clearing never adds one.
             kept = {issue.get("en") for issue in update.issues}
@@ -535,8 +570,8 @@ def create_app(
         page = page_or_404(page_id)
         if page["status"] == "submitted":
             raise HTTPException(409, "already submitted; reopen it to edit")
-        if page.get("kind") == documents.OTHER:
-            found = documents.detect(store, page, settings)
+        if page.get("kind") in (documents.OTHER, green.GREEN):
+            found = (green.detect(store, page, settings) if page.get("kind") == green.GREEN else None) or documents.detect(store, page, settings)
             store.update_page(page_id, marks=found["marks"], mark_notes=found["mark_notes"])
             return item(page_id)
         locations = {
@@ -563,11 +598,12 @@ def create_app(
         Replaces the values, their sources and the marks.
         """
         page = page_or_404(page_id)
-        if page.get("kind") != documents.OTHER:
+        if page.get("kind") not in (documents.OTHER, green.GREEN):
             raise HTTPException(409, "only documents that are not Taipower bills are found by keyword")
         if page["status"] == "submitted":
             raise HTTPException(409, "already submitted; reopen it to edit")
-        store.update_page(page_id, **documents.detect(store, page, settings))
+        # Read again: a green power statement's table, else keywords.
+        store.update_page(page_id, **(green.detect(store, page, settings) or documents.detect(store, page, settings)))
         return item(page_id)
 
     @app.get("/api/items/{page_id}/evidence.png")
@@ -625,7 +661,7 @@ def create_app(
     def export(user: str) -> Response:
         pages = list(store.pages(user=_clean_user(user), bills_only=True, visible_only=True))
         return Response(
-            export_workbook(pages, store),
+            export_workbook(pages, store, settings.green_tolerance),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers=_attachment("taipower_bills_mine.xlsx"),
         )
@@ -686,6 +722,7 @@ def create_app(
         writer.output_dir = settings.output_dir
         writer.per_user = settings.per_user_workbooks
         writer.retry_seconds = settings.workbook_retry_seconds
+        writer.tolerance = settings.green_tolerance
         if "ocr_backend" in changed:
             worker.reload_engine()
         locked = writer.write_all() if changed & {"output_dir", "workbooks"} else []

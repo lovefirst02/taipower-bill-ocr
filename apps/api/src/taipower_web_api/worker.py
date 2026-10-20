@@ -27,7 +27,7 @@ from taipower_bill_ocr.batch import (
 )
 from taipower_bill_ocr.dataset import page_record
 
-from . import documents
+from . import documents, green
 from .evidence import USAGE_LABEL, current_usage_kwh, default_marks, is_usage_mark, usage_marks
 from .settings import Settings
 from .store import Store
@@ -217,7 +217,9 @@ class OcrWorker:
         if not pages:
             return
         first = pages[0]
-        self.store.update_page(first["id"], **documents.detect(self.store, first, self.settings))
+        # A retailer's green power statement, else any other document.
+        found = green.detect(self.store, first, self.settings) or documents.detect(self.store, first, self.settings)
+        self.store.update_page(first["id"], **found)
 
     def _add_usage_marks(self, upload_id: int) -> None:
         """Once every page is read, mark 本期 usage, which is often on the back page."""
