@@ -928,7 +928,9 @@ def create_app(
             candidate = settings.web_dist / path
             if path and candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(settings.web_dist / "index.html")
+            # The page names this version's scripts: always ask again, so a
+            # new version shows at once (the scripts' names change with it).
+            return FileResponse(settings.web_dist / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

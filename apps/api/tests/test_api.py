@@ -1347,6 +1347,19 @@ class ApiTests(unittest.TestCase):
         response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})
         self.assertEqual(response.status_code, 400)
 
+    def test_the_page_is_always_asked_for_again(self):
+        """A new version must show at once: the page is not cached, its hashed scripts may be."""
+        # Its own folder: the second app's database stays open until the run ends.
+        root = Path(tempfile.mkdtemp())
+        web = root / "web"
+        (web / "assets").mkdir(parents=True)
+        (web / "index.html").write_text('<script src="/assets/index-abc.js"></script>', encoding="utf-8")
+        (web / "assets" / "index-abc.js").write_text("1", encoding="utf-8")
+        settings = Settings(data_dir=root / "data", output_dir=root / "out", web_dist=web)
+        client = TestClient(create_app(settings, extractor_factory=FakeExtractor, start_worker=False))
+        self.assertEqual(client.get("/").headers["cache-control"], "no-cache")
+        self.assertEqual(client.get("/some/page").headers["cache-control"], "no-cache")
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
