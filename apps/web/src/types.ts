@@ -204,7 +204,8 @@ export interface Item {
   locations: Record<string, Location>;
   marks: Mark[];
   mark_notes: string[];
-  image: { width: number; height: number; dpi: number };
+  /** ``version`` tells uploads apart (ids are used again after a delete). */
+  image: { width: number; height: number; dpi: number; version: string };
   /** The bill page first, then its back pages, which can hold marks too. */
   pages: ViewPage[];
   /** Default colours for marks without their own. */

@@ -438,7 +438,10 @@ def create_app(
             "locations": page["locations"],
             "marks": marks_of(page),
             "mark_notes": page["mark_notes"],
-            "image": {"width": page["image_width"], "height": page["image_height"], "dpi": settings.dpi},
+            # The upload's own file name (it starts with a random part): ids
+            # are used again after a delete, so images are cached by this.
+            "image": {"width": page["image_width"], "height": page["image_height"], "dpi": settings.dpi,
+                      "version": Path(page["path"]).name.split("_", 1)[0]},
             "colors": {"highlight": settings.highlight_color, "label": settings.label_color},
             "kind": page.get("kind") or documents.TAIPOWER,
             "sources": page.get("sources") or {},

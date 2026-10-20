@@ -334,7 +334,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
         </div>
         <div className="actions">
           <button onClick={showPreview} disabled={busy}>Preview evidence</button>
-          <a className="button" href={api.evidencePdfUrl(itemId)} onClick={(event) => { if (dirty) { event.preventDefault(); setMessage({ kind: "warn", text: "Save first so the PDF has your latest marks." }); } }}>
+          <a className="button" href={api.evidencePdfUrl(itemId, item.image.version)} onClick={(event) => { if (dirty) { event.preventDefault(); setMessage({ kind: "warn", text: "Save first so the PDF has your latest marks." }); } }}>
             Download PDF
           </a>
           {editable ? (
@@ -391,7 +391,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
           )}
           <PageViewer
             key={shown.page ?? "bill"}
-            imageUrl={api.imageUrl(itemId, shown.bill ? null : shown.page)}
+            imageUrl={api.imageUrl(itemId, item.image.version, shown.bill ? null : shown.page)}
             width={page.width}
             height={page.height}
             marks={pageMarks}

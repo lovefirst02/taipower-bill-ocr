@@ -1097,6 +1097,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(lines), 6)
         self.assertEqual({mark.get("page") for mark in detail["marks"]}, {None, 2, 3})
 
+    def test_a_new_upload_under_a_deleted_items_id_gets_a_new_image_address(self):
+        """Ids are used again after a delete: the browser must not show the old file's cached image."""
+        self.upload("Amy", "first.png")
+        first = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.client.post("/api/items/delete", json={"user": "Amy", "ids": [first["id"]]})
+        self.upload("Amy", "second.png")
+        second = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertEqual(second["id"], first["id"])  # SQLite gives the id out again
+        self.assertNotEqual(second["image"]["version"], first["image"]["version"])
+
     def test_dashboard_shows_grey_and_green_power_by_energy(self):
         self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
         self.upload_as("list.png", transfer_list())

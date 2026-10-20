@@ -80,10 +80,11 @@ export const api = {
     request<Item>(`/api/items/${id}/reopen`, { method: "POST", ...json({ user }) }),
   resetMarks: (id: number) => request<Item>(`/api/items/${id}/reset-marks`, { method: "POST" }),
 
-  imageUrl: (id: number, page?: number | null) => `/api/items/${id}/image${page ? `?page=${page}` : ""}`,
+  imageUrl: (id: number, version: string, page?: number | null) =>
+    `/api/items/${id}/image?v=${encodeURIComponent(version)}${page ? `&page=${page}` : ""}`,
   evidencePngUrl: (id: number, version: number, page?: number | null) =>
     `/api/items/${id}/evidence.png?v=${version}${page ? `&page=${page}` : ""}`,
-  evidencePdfUrl: (id: number) => `/api/items/${id}/evidence.pdf`,
+  evidencePdfUrl: (id: number, version: string) => `/api/items/${id}/evidence.pdf?v=${encodeURIComponent(version)}`,
   exportUrl: (user: string) => `/api/export.xlsx?user=${encodeURIComponent(user)}`,
   evidenceZipUrl: (user: string) => `/api/evidence.zip?user=${encodeURIComponent(user)}`,
 };
