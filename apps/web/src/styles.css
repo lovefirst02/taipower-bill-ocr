@@ -406,3 +406,5 @@ main { flex: 1; min-width: 0; display: flex; }
 .chart-tip small { color: var(--muted); }
 /* The page scrolls: its parts keep their height. */
 .dashboard > * { flex-shrink: 0; }
+/* The KPIs and the energy cards are one block. */
+.budget-kpis { display: flex; flex-direction: column; gap: 10px; }

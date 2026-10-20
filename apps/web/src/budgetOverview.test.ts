@@ -57,5 +57,7 @@ describe("budget overview", () => {
     expect([tw21Grey.total.budget, tw21Grey.bySite.length, tw21Grey.byEnergy.length]).toEqual([1200, 1, 1]);
     expect(tw21Grey.total.forecast).toBe(3 * 120 + 9 * 100);
     expect(tw21Grey.total.status).toBe("at risk");  // 1,260 against 1,200: 5% over
+    const ttt = overview(plan, "all", "all", "TTT");
+    expect([ttt.bySite.map((item) => item.name), ttt.total.budget]).toEqual([["TTT"], 2000]);
   });
 });

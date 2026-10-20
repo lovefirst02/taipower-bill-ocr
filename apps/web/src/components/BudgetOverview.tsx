@@ -31,8 +31,13 @@ interface Props {
 export function BudgetOverview({ plan, onOpenSite }: Props) {
   const [entity, setEntity] = useState("all");
   const [energy, setEnergy] = useState<PlanEnergy | "all">("all");
+  const [siteName, setSiteName] = useState("all");
   const entities = useMemo(() => [...new Set(plan.sites.map((site) => site.entity ?? "(no entity)"))].sort(), [plan]);
-  const view = useMemo(() => overview(plan, entity, energy), [plan, entity, energy]);
+  // The sites of the entity chosen; a site no longer among them goes back to all.
+  const siteNames = useMemo(() => plan.sites.filter((site) => entity === "all" || (site.entity ?? "(no entity)") === entity)
+    .map((site) => site.site), [plan, entity]);
+  const chosenSite = siteNames.includes(siteName) ? siteName : "all";
+  const view = useMemo(() => overview(plan, entity, energy, chosenSite), [plan, entity, energy, chosenSite]);
   const { total } = view;
   const now = new Date();
   const elapsed = plan.year < now.getFullYear() ? 1 : plan.year > now.getFullYear() ? 0 : (view.lastClosed + 1) / 12;
@@ -46,6 +51,10 @@ export function BudgetOverview({ plan, onOpenSite }: Props) {
             {entities.map((name) => <option key={name}>{name}</option>)}
           </select></label>
         )}
+        <label>Site <select value={chosenSite} onChange={(event) => setSiteName(event.target.value)}>
+          <option value="all">All sites</option>
+          {siteNames.map((name) => <option key={name}>{name}</option>)}
+        </select></label>
         <div className="segmented">
           {(["all", "grey", "solar", "wind"] as const).map((key) => (
             <button key={key} type="button" className={key === energy ? "active" : ""} onClick={() => setEnergy(key)}>
@@ -55,6 +64,7 @@ export function BudgetOverview({ plan, onOpenSite }: Props) {
         </div>
       </div>
 
+      <div className="budget-kpis">
       <div className="kpis">
         <div className="kpi"><span className="kpi-label">Annual budget</span><strong>{money(total.budget)}</strong>
           <small>{plan.year}</small></div>
@@ -65,11 +75,6 @@ export function BudgetOverview({ plan, onOpenSite }: Props) {
         <div className="kpi"><span className="kpi-label">Status</span><strong><StatusBadge value={total.status} /></strong>
           <small>{total.budget ? `left to spend ${money(total.budget - total.actual)}` : ""}</small></div>
       </div>
-
-      <section className="dash-card">
-        <h3>Spending through the year (cumulative)</h3>
-        <BurnUp months={view.months} budget={total.budget} lastClosed={view.lastClosed} />
-      </section>
 
       {energy === "all" && (
         <div className="energy-cards">
@@ -83,6 +88,12 @@ export function BudgetOverview({ plan, onOpenSite }: Props) {
           ))}
         </div>
       )}
+      </div>
+
+      <section className="dash-card">
+        <h3>Spending through the year (cumulative)</h3>
+        <BurnUp months={view.months} budget={total.budget} lastClosed={view.lastClosed} />
+      </section>
 
       <section className="dash-card">
         <h3>Sites — the most over budget first</h3>

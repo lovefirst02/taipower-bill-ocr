@@ -52,9 +52,10 @@ export interface Overview {
 
 const add = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
 
-/** The plan as chosen (an entity, an energy, or all), added up. */
-export function overview(plan: Plan, entity: string, energy: PlanEnergy | "all"): Overview {
-  const sites = plan.sites.filter((site) => entity === "all" || (site.entity ?? "(no entity)") === entity);
+/** The plan as chosen (an entity, a site, an energy, or all), added up. */
+export function overview(plan: Plan, entity: string, energy: PlanEnergy | "all", siteName = "all"): Overview {
+  const sites = plan.sites.filter((site) => (entity === "all" || (site.entity ?? "(no entity)") === entity)
+    && (siteName === "all" || site.site === siteName));
   const energies = energy === "all" ? PLAN_ENERGIES : [energy];
   const of = (site: SitePlan, key: PlanEnergy) => site.energies[key];
 
