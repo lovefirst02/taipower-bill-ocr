@@ -3,7 +3,7 @@ import { api } from "../api";
 import { isOnPage, labelSize, markBox, newHighlight, newId, newLabel } from "../marks";
 import { lineBoxes, linesAt, linesBox, PICK_LABELS, placeLabel, valueFor } from "../pick";
 import type { Box } from "../pick";
-import type { Column, Issue, Item, Mark, MarkColors, Row, Site, ValueSource, ViewPage } from "../types";
+import type { Column, Entity, Issue, Item, Mark, MarkColors, Row, Site, ValueSource, ViewPage } from "../types";
 import { FieldForm } from "./FieldForm";
 import { draftOf, GreenTable } from "./GreenTable";
 import type { GreenDraft } from "./GreenTable";
@@ -89,6 +89,8 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
   const [sites, setSites] = useState<Site[]>([]);
   // The site chosen by hand: undefined = unchanged, null = by 電號.
   const [siteChoice, setSiteChoice] = useState<number | null | undefined>(undefined);
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [entityChoice, setEntityChoice] = useState<number | null | undefined>(undefined);
   // A green power statement being edited (kind "green").
   const [greenDraft, setGreenDraft] = useState<GreenDraft | null>(null);
   const [greenEdited, setGreenEdited] = useState(false);
@@ -103,9 +105,10 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
   dirtyRef.current = dirty;
   useEffect(() => {
     api.sites().then(setSites).catch(() => undefined);
+    api.entities().then(setEntities).catch(() => undefined);
     if (settingsVersion === 0 || dirtyRef.current) return;
     api.item(itemId)
-      .then((loaded) => setItem((current) => (current ? { ...current, site: loaded.site, months: loaded.months } : current)))
+      .then((loaded) => setItem((current) => (current ? { ...current, site: loaded.site, entity: loaded.entity, months: loaded.months } : current)))
       .catch(() => undefined);
   }, [settingsVersion, itemId]);
 
@@ -117,6 +120,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     setIssues(loaded.issues ?? []);
     setNotes(loaded.mark_notes ?? []);
     setSiteChoice(undefined);
+    setEntityChoice(undefined);
     setGreenDraft(loaded.green ? draftOf(loaded.green) : null);
     setGreenEdited(false);
     setPicking(null);
@@ -167,6 +171,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     issues,
     mark_notes: notes,
     ...(siteChoice !== undefined ? { site_id: siteChoice } : {}),
+    ...(entityChoice !== undefined ? { entity_id: entityChoice } : {}),
     ...(greenEdited && greenDraft ? { green: greenDraft } : {}),
   };
   const save = () => run(() => api.save(itemId, user, row, marks, sources, kept), "Draft saved");
@@ -343,6 +348,26 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
               {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
             </select>
           </label>
+          {entities.length > 0 && (
+            <label className="site-picker" title="The company of the group this document is for; by default its site's, or the code or 統一編號 in its file name or text (Settings → Entities)">
+              Entity
+              <select
+                value={entityChoice === undefined ? (item.entity?.how === "manual" ? String(item.entity.id) : "") : entityChoice === null ? "" : String(entityChoice)}
+                disabled={!editable}
+                onChange={(event) => {
+                  setEntityChoice(event.target.value ? Number(event.target.value) : null);
+                  setDirty(true);
+                }}
+              >
+                <option value="">
+                  {item.entity && item.entity.how !== "manual"
+                    ? `${item.entity.name} (${item.entity.how === "site" ? "by site" : "by file name / text"})`
+                    : "— not found —"}
+                </option>
+                {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+              </select>
+            </label>
+          )}
           {dirty && <span className="badge unsaved">Unsaved changes</span>}
         </div>
         <div className="actions">

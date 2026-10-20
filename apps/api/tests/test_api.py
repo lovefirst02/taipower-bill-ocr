@@ -137,6 +137,10 @@ def purchase_notice(kwh="650,202", supply="166,842"):
     return page
 
 
+def ours_view(test, item):
+    return test.client.get(f"/api/items/{item['id']}").json()["green"]["comparisons"]
+
+
 def energy_saving_page():
     """A bill's back page: the 節電資訊 table with this period's usage."""
     page = BillResult({
@@ -1170,7 +1174,37 @@ class ApiTests(unittest.TestCase):
         left_out = [doc for doc in twice["documents"] if doc["duplicate_of"]]
         self.assertEqual(sorted(doc["filename"] for doc in left_out), ["list again.png", "notice again.png"])
         notice = next(doc for doc in once["documents"] if doc["type"] == "notice")
-        self.assertEqual((notice["kwh"], notice["cost"], notice["counted"]), (650202, 3809716, "cost"))
+        self.assertEqual((notice["kwh"], notice["cost"], notice["counted_kwh"], notice["counted_cost"]), (650202, 3809716, 650202, 3809716))
+
+    def test_each_companys_notice_counts_for_its_own_meters_only(self):
+        """Three companies of a group buy under one service: each has its own notice."""
+        local = self.local_client()
+        entities = local.put("/api/entities", json={"entities": [
+            {"name": "ASML TW21", "code": "TW21", "tax_id": "82969793"}, {"name": "ASML TW01", "code": "TW01"}]}).json()
+        tw21 = next(entity["id"] for entity in entities if entity["code"] == "TW21")
+        self.save_sites([{"name": "彰化廠", "entity_id": tw21, "meters": ["05785193319", "05785204210"]}])
+        self.upload_as("list.png", transfer_list())  # our meters: 93,219 + 556,983 kWh
+        # Our notice is for more kWh than our meters on the list (B 700,000).
+        ours = self.upload_as("Solar expense_ASML(TW21).png", purchase_notice(kwh="700,000"))
+        self.upload_as("Solar expense_ASML(TW01).png", purchase_notice(kwh="300,000", supply="50,000"))
+        self.upload_as("Solar expense_ASML(TW02).png", purchase_notice(kwh="400,000", supply="60,000"))
+        self.assertEqual(ours["entity"]["name"], "ASML TW21")
+        mix = self.client.get("/api/dashboard").json()
+        documents = {doc["filename"]: doc for doc in mix["documents"]}
+        counted = documents["Solar expense_ASML(TW21).png"]
+        expected = round(3809716 * 650202 / 700000)
+        self.assertEqual((counted["entity"], counted["counted_kwh"], counted["counted_cost"]), ("ASML TW21", 650202, expected))
+        self.assertIsNone(documents["Solar expense_ASML(TW01).png"]["counted_cost"])  # another company's
+        self.assertIn("其他公司", documents["Solar expense_ASML(TW02).png"]["note"])
+        self.assertEqual(round(sum(row["green_cost"] or 0 for row in mix["rows"]), 2), expected)
+        self.assertEqual({row["entity"] for row in mix["rows"]}, {"ASML TW21"})
+        # The notice is compared with its own company's meters on Taipower's list.
+        services = {entry["entity"]: entry for entry in ours_view(self, ours)["services"]}
+        self.assertEqual((services["ASML TW21"]["taipower_list_kwh"], services["ASML TW21"]["kwh_difference"]), (650202, 700000 - 650202))
+        # A notice can be put under an entity by hand.
+        other = documents["Solar expense_ASML(TW02).png"]
+        moved = self.client.put(f"/api/items/{other['id']}", json={"user": "Amy", "entity_id": tw21}).json()
+        self.assertEqual(moved["entity"]["how"], "manual")
 
     def test_green_services_setting_needs_an_energy(self):
         response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})

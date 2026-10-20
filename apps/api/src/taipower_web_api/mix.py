@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Iterable, Mapping
 
 from taipower_bill_ocr.green_statement import is_green
@@ -31,7 +31,7 @@ from .store import Store, meter_number
 SOLAR, WIND, UNCLASSIFIED = "太陽能", "風力", "未分類"
 _BILLED_KWH = [f"計費度數_{label}" for label in ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")]
 MIX_COLUMNS = [
-    "月份", "據點", "據點代碼", "電號", "灰電度數", "太陽能度數", "風力度數", "其他綠電度數", "未分類綠電度數",
+    "月份", "Entity", "據點", "據點代碼", "電號", "灰電度數", "太陽能度數", "風力度數", "其他綠電度數", "未分類綠電度數",
     "綠電度數合計", "總用電度數", "綠電占比", "灰電費用（台電稅前）", "綠電費用（售電業者未稅）", "綠電度數來源",
 ]
 SOURCE_NAMES = {"transfer_list": "台電轉供清單", "statement": "售電業者明細", "bill": "台電帳單轉供度數"}
@@ -92,6 +92,13 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
         else:
             seen_documents[key] = page
     ledger = [_ledger_entry(page, ours, duplicates.get(page["id"])) for page in sorted(pages, key=lambda item: item["id"])]
+    ledger_by_id = {item["id"]: item for item in ledger}
+    for item, page in zip(ledger, sorted(pages, key=lambda item: item["id"])):
+        if item["type"] != green.NOTICE:
+            owner = store.entity_of(dict(page))
+            item["entity"] = owner.get("name") if owner else None
+    meter_entity = store.meter_entities()
+    entity_names = {entity["id"]: entity["name"] for entity in store.entities()}
     pages = [page for page in pages if page["id"] not in duplicates]
     entries: dict[tuple[str, str], dict[str, Any]] = {}
     notes: list[str] = []
@@ -102,6 +109,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
             site = store.site_of(dict(page) if page is not None else {"row": {"Custom No. 電號": meter}}) or {}
             entries[key] = {
                 "month": month, "meter": meter, "site": site.get("name"), "site_code": site.get("code"),
+                "entity": entity_names.get(site.get("entity_id")),
                 "grey_kwh": None, "bill_green_kwh": None, "grey_cost": None,
                 "list": defaultdict(Decimal), "statement": defaultdict(Decimal), "green_cost": None,
             }
@@ -185,26 +193,52 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                     target["statement"][energy_name(line.get("energy"))] += _number(line["kwh"])
                 add(target, "green_cost", _number(line.get("cost")))
 
-    # A notice's untaxed total, shared among its service's meters by kWh.
+    # A retailer's notice is for one company of the group: its cost is that
+    # company's kWh in Taipower's list × the notice's price (untaxed ÷ B),
+    # shared among the company's meters by kWh.
+    notices: dict[tuple[str, Any], list[tuple[Mapping[str, Any], Mapping[str, Any]]]] = defaultdict(list)
     for page, statement in greens:
         month = green._month(statement.get("period"))
-        if month is None or green.type_of(statement) != green.NOTICE:
-            continue
-        cost = _number((statement.get("values") or {}).get("untaxed"))
-        meters = list_kwh.get((month, statement.get("service")))
-        if cost is None:
-            continue
-        if not meters or not sum(meters.values()):
-            notes.append(f"{page.get('filename')}: 找不到同月同服務編號的台電轉供清單，綠電費用無法分到電號")
-            add(entry(month, f"服務 {statement.get('service') or '?'}"), "green_cost", cost)
-            continue
-        whole = sum(meters.values())
-        shares = {meter: (cost * kwh / whole).quantize(Decimal("0.01")) for meter, kwh in meters.items()}
-        # Rounding leftovers go to the largest share so the parts add up.
-        largest = max(shares, key=lambda meter: meters[meter])
-        shares[largest] += cost - sum(shares.values())
-        for meter, share in shares.items():
-            add(entry(month, meter), "green_cost", share)
+        if month is not None and green.type_of(statement) == green.NOTICE:
+            notices[(month, statement.get("service"))].append((page, statement))
+    for (month, service), group in notices.items():
+        meters = list_kwh.get((month, service)) or {}
+        for page, statement in group:
+            values = statement.get("values") or {}
+            cost, bought = _number(values.get("untaxed")), _number(values.get("kwh"))
+            owner = store.entity_of(dict(page))
+            counted = ledger_by_id[page["id"]]
+            counted["entity"] = owner.get("name") if owner else None
+            if owner is not None:
+                targets = {meter: kwh for meter, kwh in meters.items() if (meter_entity.get(meter) or {}).get("id") == owner["id"]}
+            elif len(group) == 1:
+                targets = dict(meters)  # the only notice for the service: the company's
+            elif any(store.entity_of(dict(other)) for other, _ in group):
+                counted["note"] = "不屬於設定的 Entity（其他公司的通知單），未計入"
+                continue
+            else:
+                counted["note"] = "同一服務編號有多張通知單：請在檢查頁指定 Entity，或在 Settings 設定 Entity 的代碼／統編"
+                notes.append(f"{page.get('filename')}: {counted['note']}")
+                continue
+            if cost is None:
+                continue
+            if not targets or not sum(targets.values()):
+                counted["note"] = "找不到同月同服務編號、屬於這個 Entity 的台電轉供清單列，費用無法分到電號"
+                notes.append(f"{page.get('filename')}: {counted['note']}")
+                if not meters:
+                    add(entry(month, f"服務 {service or '?'}"), "green_cost", cost)
+                    counted.update(counted_kwh=None, counted_cost=_plain(cost))
+                continue
+            ours_kwh = sum(targets.values())
+            total = (cost * ours_kwh / bought).quantize(Decimal(1), rounding=ROUND_HALF_UP) if bought else cost
+            shares = {meter: (total * kwh / ours_kwh).quantize(Decimal("0.01")) for meter, kwh in targets.items()}
+            # Rounding leftovers go to the largest share so the parts add up.
+            largest = max(shares, key=lambda meter: targets[meter])
+            shares[largest] += total - sum(shares.values())
+            for meter, share in shares.items():
+                add(entry(month, meter), "green_cost", share)
+            counted.update(counted_kwh=_plain(ours_kwh), counted_cost=_plain(total),
+                           unit_price=float(round(cost / bought, 6)) if bought else None)
 
     rows = []
     for (month, meter), item in sorted(entries.items()):
@@ -223,7 +257,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
             "month": month, "meter": None if meter.startswith(("#", "服務")) else meter,
             "document": meter if meter.startswith("服務") else next(
                 (page.get("filename") for page in pages if f"#{page.get('id')}" == meter), None),
-            "site": item["site"], "site_code": item["site_code"],
+            "site": item["site"], "site_code": item["site_code"], "entity": item["entity"],
             "grey_kwh": _plain(item["grey_kwh"]),
             "green_kwh": {energy: _plain(kwh) for energy, kwh in sorted(by_energy.items()) if kwh},
             "green_total": _plain(green_kwh),
@@ -272,7 +306,8 @@ def _ledger_entry(page: Mapping[str, Any], ours: set[str], duplicate_of: Mapping
     """What one document adds: its kWh and cost as the dashboard counts them."""
     entry: dict[str, Any] = {"id": page["id"], "filename": page.get("filename"), "page": page.get("page_number"), "user": page.get("user"),
                              "status": page.get("status"),
-                             "duplicate_of": None if duplicate_of is None else f"{duplicate_of.get('filename')} (#{duplicate_of['id']})"}
+                             "duplicate_of": None if duplicate_of is None else f"{duplicate_of.get('filename')} (#{duplicate_of['id']})",
+                             "entity": None, "note": None}
     if page.get("kind") == green.GREEN:
         statement = page.get("green") or {}
         kind = green.type_of(statement)
@@ -287,7 +322,9 @@ def _ledger_entry(page: Mapping[str, Any], ours: set[str], duplicate_of: Mapping
             entry.update(kwh=_sum(pairs.values()), cost=_sum(row.get("fee") for row in rows), surcharge=None, counted="kwh")
         else:
             values = statement.get("values") or {}
-            entry.update(kwh=values.get("kwh"), cost=values.get("untaxed"), surcharge=values.get("surplus_charge"), counted="cost")
+            # What counts is worked out with Taipower's list (counted_kwh, counted_cost).
+            entry.update(kwh=values.get("kwh"), cost=values.get("untaxed"), surcharge=values.get("surplus_charge"), counted="share",
+                         counted_kwh=None, counted_cost=None, unit_price=None)
     else:
         row = page.get("row") or {}
         billed = _total(row, _BILLED_KWH)
@@ -303,7 +340,7 @@ def mix_rows(pages: Iterable[Mapping[str, Any]], store: Store, service_energy: M
         kwh = row["green_kwh"]
         other = sum(value for energy, value in kwh.items() if energy not in (SOLAR, WIND, UNCLASSIFIED))
         sheet.append([
-            row["month"], row["site"], row["site_code"], row["meter"] or row["document"], row["grey_kwh"], kwh.get(SOLAR), kwh.get(WIND),
+            row["month"], row["entity"], row["site"], row["site_code"], row["meter"] or row["document"], row["grey_kwh"], kwh.get(SOLAR), kwh.get(WIND),
             other or None, kwh.get(UNCLASSIFIED), row["green_total"], row["total_kwh"], row["green_share"],
             row["grey_cost"], row["green_cost"], SOURCE_NAMES.get(row["green_source"] or ""),
         ])

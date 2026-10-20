@@ -403,10 +403,13 @@ def reconcile(store: Store) -> dict[str, Any]:
                 service = services.setdefault((month, statement.get("service")), _service(month, statement.get("service")))
                 if row.get("section"):
                     service["sections"].add(row["section"])
+                # Per meter, so each company's notice is held against its own meters.
+                per_meter = service["meters"].setdefault(meter, {"kwh": 0, "fees": 0})
                 if pair in seen and row.get("kwh") is not None and row is _first(statement, pair):
-                    service["taipower_list_kwh"] += row["kwh"]
-                service["taipower_list_fees"] += row.get("fee") or 0
-                service["documents"].append(reference)
+                    per_meter["kwh"] += row["kwh"]
+                per_meter["fees"] += row.get("fee") or 0
+                if reference not in service["documents"]:
+                    service["documents"].append(reference)
         elif kind == STATEMENT:
             for line in statement.get("lines") or []:
                 if not line.get("meter") or not is_green(line) or line.get("kwh") is None:
@@ -416,8 +419,7 @@ def reconcile(store: Store) -> dict[str, Any]:
                 entry["documents"].append(reference)
         else:
             service = services.setdefault((month, statement.get("service")), _service(month, statement.get("service")))
-            service["notice"] = {"kwh": (statement.get("values") or {}).get("kwh"), "supply_fees": (statement.get("values") or {}).get("supply_fees")}
-            service["documents"].append(reference)
+            service["notices"].append((page, reference))
 
     meter_rows = []
     for entry in sorted(meters.values(), key=lambda item: (item["month"], item["meter"])):
@@ -433,23 +435,41 @@ def reconcile(store: Store) -> dict[str, Any]:
         )
         meter_rows.append(entry)
     service_rows = []
+    meter_entity = store.meter_entities()
     for service in sorted(services.values(), key=lambda item: (item["month"], item["service"] or "")):
-        notice = service["notice"] or {}
-        has_list = any(document["type"] == TRANSFER_LIST for document in service["documents"])
-        service.update(
-            has_list=has_list,
-            # The fee tables read (輸電, 配電, ...): a list missing some cannot add up to the notice's E.
-            sections=sorted(service["sections"]),
-            kwh_difference=None if not has_list or notice.get("kwh") is None else notice["kwh"] - service["taipower_list_kwh"],
-            fee_difference=None if not has_list or notice.get("supply_fees") is None else notice["supply_fees"] - service["taipower_list_fees"],
-        )
-        service_rows.append(service)
+        has_list = bool(service["documents"])
+        # One row per retailer's notice (each company of the group has its
+        # own), against that company's meters; a list without a notice alone.
+        for page, reference in service["notices"] or [(None, None)]:
+            owner = store.entity_of(dict(page)) if page is not None else None
+            if owner is not None:
+                meters_in = {meter: values for meter, values in service["meters"].items() if (meter_entity.get(meter) or {}).get("id") == owner["id"]}
+            elif page is None or len(service["notices"]) == 1:
+                meters_in = service["meters"]
+            else:
+                meters_in = None  # several notices and none told apart
+            notice = ((page.get("green") or {}).get("values") or {}) if page is not None else {}
+            listed_kwh = sum(values["kwh"] for values in meters_in.values()) if meters_in is not None else None
+            listed_fees = sum(values["fees"] for values in meters_in.values()) if meters_in is not None else None
+            compared = has_list and meters_in is not None
+            service_rows.append({
+                "month": service["month"], "service": service["service"], "entity": owner.get("name") if owner else None,
+                "taipower_list_kwh": listed_kwh if listed_kwh is not None else 0,
+                "taipower_list_fees": listed_fees if listed_fees is not None else 0,
+                "notice": {"kwh": notice.get("kwh"), "supply_fees": notice.get("supply_fees")} if page is not None else None,
+                "documents": [*service["documents"], *([reference] if reference else [])],
+                "has_list": has_list,
+                "entity_unknown": meters_in is None,
+                # The fee tables read (輸電, 配電, ...): a list missing some cannot add up to the notice's E.
+                "sections": sorted(service["sections"]),
+                "kwh_difference": None if not compared or notice.get("kwh") is None else notice["kwh"] - listed_kwh,
+                "fee_difference": None if not compared or notice.get("supply_fees") is None else notice["supply_fees"] - listed_fees,
+            })
     return {"meters": meter_rows, "services": service_rows, "sites_set": bool(ours)}
 
 
 def _service(month: str, service: str | None) -> dict[str, Any]:
-    return {"month": month, "service": service, "taipower_list_kwh": 0, "taipower_list_fees": 0, "sections": set(),
-            "notice": None, "documents": []}
+    return {"month": month, "service": service, "meters": {}, "sections": set(), "notices": [], "documents": []}
 
 
 def _first(statement: Mapping[str, Any], pair: tuple[str, str]) -> Mapping[str, Any] | None:
@@ -527,7 +547,7 @@ GREEN_COLUMNS = [
 LIST_COLUMNS = ["月份", "服務編號", "費用項目", "據點", "本公司", "用戶電號", "用戶表號", "發電電號", "發電表號", "轉供度數", "費率", "費用", "核對", "備註", "來源檔案"]
 CHECK_COLUMNS = ["月份", "據點", "電號", "服務編號", "台電清單轉供度數", "售電業者轉供度數", "差異（售電業者−台電清單）",
                  "台電帳單轉供度數", "差異（帳單−台電清單）", "帳單比對方式", "台電清單轉供費用"]
-SERVICE_COLUMNS = ["月份", "服務編號", "台電清單轉供度數（本公司）", "通知單購電量 B", "差異（B−台電清單）",
+SERVICE_COLUMNS = ["月份", "服務編號", "Entity", "台電清單轉供度數（本公司）", "通知單購電量 B", "差異（B−台電清單）",
                    "台電清單轉供費用（本公司）", "通知單電能供應費用 E", "差異（E−台電清單）", "台電清單費用項目"]
 HOW = {"same period": "期間相同", "prorated": "期間不同，依天數換算", "none": "找不到台電帳單", "no period": "沒有期間"}
 STATUS = {"ok": "符合", "check": "需確認", "incomplete": "資料不全"}
@@ -593,9 +613,10 @@ def check_rows(store: Store) -> tuple[list[list[Any]], list[list[Any]]]:
         HOW.get(entry["bill_how"], entry["bill_how"]), entry["taipower_list_fees"],
     ] for entry in every["meters"]]
     service_rows = [[
-        entry["month"], entry["service"], entry["taipower_list_kwh"] if entry["has_list"] else None,
+        entry["month"], entry["service"], entry["entity"] or ("（多張通知單，未指定 Entity）" if entry["entity_unknown"] else None),
+        entry["taipower_list_kwh"] if entry["has_list"] and not entry["entity_unknown"] else None,
         (entry["notice"] or {}).get("kwh"), entry["kwh_difference"],
-        entry["taipower_list_fees"] if entry["has_list"] else None, (entry["notice"] or {}).get("supply_fees"), entry["fee_difference"],
-        "、".join(entry["sections"]) or None,
+        entry["taipower_list_fees"] if entry["has_list"] and not entry["entity_unknown"] else None,
+        (entry["notice"] or {}).get("supply_fees"), entry["fee_difference"], "、".join(entry["sections"]) or None,
     ] for entry in every["services"]]
     return meter_rows, service_rows

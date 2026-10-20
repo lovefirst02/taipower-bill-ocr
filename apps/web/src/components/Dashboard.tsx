@@ -15,6 +15,7 @@ const money = (value: number | null | undefined) => (value === null || value ===
 const percent = (value: number | null) => (value === null ? "—" : `${(value * 100).toFixed(1)}%`);
 const price = (value: number | null) => (value === null ? "—" : value.toFixed(4));
 const NO_SITE = "(no site)";
+const NO_ENTITY = "(no entity)";
 const SOURCES: Record<string, string> = { transfer_list: "Taipower list", statement: "Retailer", bill: "Bill 轉供度數" };
 
 /** Grey and green power (solar, wind ...) per month and site. */
@@ -24,6 +25,7 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [submittedOnly, setSubmittedOnly] = useState(false);
   const [year, setYear] = useState("all");
   const [site, setSite] = useState("all");
+  const [entity, setEntity] = useState("all");
 
   const load = useCallback(() => {
     setError(null);
@@ -33,14 +35,17 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   const years = useMemo(() => [...new Set((mix?.rows ?? []).map((row) => row.month.slice(0, 4)))].sort(), [mix]);
   const sites = useMemo(() => [...new Set((mix?.rows ?? []).map((row) => row.site ?? NO_SITE))].sort(), [mix]);
+  const entityNames = useMemo(() => [...new Set((mix?.rows ?? []).map((row) => row.entity ?? NO_ENTITY))].sort(), [mix]);
   const rows = useMemo(
-    () => (mix?.rows ?? []).filter((row) => (year === "all" || row.month.startsWith(year)) && (site === "all" || (row.site ?? NO_SITE) === site)),
-    [mix, year, site],
+    () => (mix?.rows ?? []).filter((row) => (year === "all" || row.month.startsWith(year)) && (site === "all" || (row.site ?? NO_SITE) === site)
+      && (entity === "all" || (row.entity ?? NO_ENTITY) === entity)),
+    [mix, year, site, entity],
   );
   const kinds = useMemo(() => energies(rows), [rows]);
   const sum = useMemo(() => total(rows), [rows]);
   const months = useMemo(() => groupBy(rows, (row) => row.month), [rows]);
   const bySite = useMemo(() => groupBy(rows, (row) => row.site ?? NO_SITE), [rows]);
+  const byEntity = useMemo(() => groupBy(rows, (row) => row.entity ?? NO_ENTITY), [rows]);
 
   if (error) return <div className="dashboard"><p className="notice">Could not load the dashboard: {error}</p></div>;
   if (!mix) return <div className="dashboard"><p className="hint">Loading…</p></div>;
@@ -53,6 +58,12 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
           <option value="all">All</option>
           {years.map((name) => <option key={name}>{name}</option>)}
         </select></label>
+        {entityNames.some((name) => name !== NO_ENTITY) && (
+          <label>Entity <select value={entity} onChange={(event) => setEntity(event.target.value)}>
+            <option value="all">All entities</option>
+            {entityNames.map((name) => <option key={name}>{name}</option>)}
+          </select></label>
+        )}
         <label>Site <select value={site} onChange={(event) => setSite(event.target.value)}>
           <option value="all">All sites</option>
           {sites.map((name) => <option key={name}>{name}</option>)}
@@ -82,6 +93,13 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
             <h3>kWh per month</h3>
             <MonthChart months={months} kinds={kinds} />
           </section>
+
+          {byEntity.some(([name]) => name !== NO_ENTITY) && (
+            <section className="dash-card">
+              <h3>By entity</h3>
+              <TotalsTable groups={byEntity} overall={sum} kinds={kinds} first="Entity" />
+            </section>
+          )}
 
           <section className="dash-card">
             <h3>By site</h3>
@@ -219,25 +237,37 @@ function TotalsTable({ groups, overall, kinds, first }: { groups: [string, MixTo
 
 const TYPE_NAMES: Record<string, string> = { bill: "Bill / other", statement: "售電明細", notice: "購電通知單", transfer_list: "台電清單" };
 
+/** How a document's numbers count: a notice gives its company's kWh × its price. */
+function counting(doc: MixDocument): string {
+  if (doc.duplicate_of) return `No — same as ${doc.duplicate_of}`;
+  if (doc.counted === "share") {
+    if (doc.counted_cost === null || doc.counted_cost === undefined) return doc.note ?? "Not counted";
+    if (doc.counted_kwh === null || doc.counted_kwh === undefined) return `${money(doc.counted_cost)} (no Taipower list to share it by)`;
+    return `${kwh(doc.counted_kwh)} kWh × ${doc.unit_price?.toFixed(4) ?? "?"} = ${money(doc.counted_cost)}`;
+  }
+  return doc.counted === "kwh" ? "kWh (fees are in the retailer's cost)" : doc.counted === "cost" ? "Cost" : "kWh and cost";
+}
+
 /** Every document with what it adds, so the totals can be traced back. */
 function DocumentTable({ documents }: { documents: MixDocument[] }) {
   return (
     <div className="green-scroll">
       <table className="dash-table">
         <thead>
-          <tr><th>File</th><th>Type</th><th>Period</th><th>Service / 電號</th><th>kWh</th><th>Cost</th><th>of which 餘電</th><th>Counted</th><th>Uploaded by</th></tr>
+          <tr><th>File</th><th>Type</th><th>Entity</th><th>Period</th><th>Service / 電號</th><th>kWh</th><th>Cost</th><th>of which 餘電</th><th>Counted</th><th>Uploaded by</th></tr>
         </thead>
         <tbody>
           {documents.map((doc) => (
             <tr key={doc.id} className={doc.duplicate_of ? "duplicate" : ""}>
               <td title={`#${doc.id}`}>{doc.filename}{doc.page ? ` p.${doc.page}` : ""}</td>
               <td>{TYPE_NAMES[doc.type] ?? doc.type}</td>
+              <td>{doc.entity ?? "—"}</td>
               <td>{doc.period ?? "—"}</td>
               <td>{doc.service ?? "—"}</td>
               <td className="num">{kwh(doc.kwh)}</td>
               <td className="num">{money(doc.cost)}</td>
               <td className="num">{doc.surcharge ? money(doc.surcharge) : ""}</td>
-              <td>{doc.duplicate_of ? `No — same as ${doc.duplicate_of}` : doc.counted === "kwh" ? "kWh (fees are in the retailer's cost)" : doc.counted === "cost" ? "Cost" : "kWh and cost"}</td>
+              <td className={doc.note || doc.duplicate_of ? "warn-text" : ""}>{counting(doc)}</td>
               <td>{doc.user}</td>
             </tr>
           ))}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -53,6 +54,13 @@ CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     code TEXT,                       -- e.g. the site's code in Intelex
+    note TEXT
+);
+CREATE TABLE IF NOT EXISTS entities (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,       -- a company of the group (a legal entity)
+    code TEXT,                       -- e.g. TW21, as written on file names
+    tax_id TEXT,                     -- 統一編號, on retailers' notices
     note TEXT
 );
 CREATE TABLE IF NOT EXISTS meters (
@@ -123,9 +131,12 @@ class Store:
             ("hidden", "INTEGER NOT NULL DEFAULT 0"), ("evidence_file", "TEXT"), ("kind", "TEXT"), ("sources_json", "TEXT"),
             ("site_id", "INTEGER"),  # chosen by hand; otherwise found from the 電號
             ("green_json", "TEXT"),  # a green power statement's period and lines
+            ("entity_id", "INTEGER"),  # chosen by hand; otherwise from its site or its text
         ):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
+        if "entity_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(sites)")}:
+            self._db.execute("ALTER TABLE sites ADD COLUMN entity_id INTEGER")
         self._db.commit()
         self._lock = threading.Lock()
 
@@ -199,12 +210,12 @@ class Store:
             for site_id in kept:
                 db.execute("UPDATE sites SET name = ? WHERE id = ?", (f"__renaming_{site_id}", site_id))
             for site in sites:
-                values = (site["name"], site.get("code") or None, site.get("note") or None)
+                values = (site["name"], site.get("code") or None, site.get("note") or None, site.get("entity_id"))
                 if site.get("id") in kept:
-                    db.execute("UPDATE sites SET name = ?, code = ?, note = ? WHERE id = ?", (*values, site["id"]))
+                    db.execute("UPDATE sites SET name = ?, code = ?, note = ?, entity_id = ? WHERE id = ?", (*values, site["id"]))
                     site_id = site["id"]
                 else:
-                    site_id = db.execute("INSERT INTO sites (name, code, note) VALUES (?, ?, ?)", values).lastrowid
+                    site_id = db.execute("INSERT INTO sites (name, code, note, entity_id) VALUES (?, ?, ?, ?)", values).lastrowid
                 for number in site.get("meters") or []:
                     db.execute("INSERT INTO meters (customer_number, site_id) VALUES (?, ?)", (number, site_id))
             db.commit()
@@ -227,6 +238,64 @@ class Store:
             if rows:
                 return {**dict(rows[0]), "how": "meter"}
         return None
+
+    # --------------------------------------------------------------- entities
+    def entities(self) -> list[dict[str, Any]]:
+        """The group's companies, by name."""
+        return [dict(row) for row in self._query("SELECT * FROM entities ORDER BY name")]
+
+    def replace_entities(self, entities: list[dict[str, Any]]) -> None:
+        """Save the whole list at once; entities keep their id, so sites and documents stay with them."""
+        with self._lock:
+            db = self._db
+            existing = {row[0] for row in db.execute("SELECT id FROM entities")}
+            kept = {entity["id"] for entity in entities if entity.get("id") in existing}
+            for removed in existing - kept:
+                db.execute("UPDATE sites SET entity_id = NULL WHERE entity_id = ?", (removed,))
+                db.execute("UPDATE pages SET entity_id = NULL WHERE entity_id = ?", (removed,))
+                db.execute("DELETE FROM entities WHERE id = ?", (removed,))
+            for entity_id in kept:
+                db.execute("UPDATE entities SET name = ? WHERE id = ?", (f"__renaming_{entity_id}", entity_id))
+            for entity in entities:
+                values = (entity["name"], entity.get("code") or None, entity.get("tax_id") or None, entity.get("note") or None)
+                if entity.get("id") in kept:
+                    db.execute("UPDATE entities SET name = ?, code = ?, tax_id = ?, note = ? WHERE id = ?", (*values, entity["id"]))
+                else:
+                    db.execute("INSERT INTO entities (name, code, tax_id, note) VALUES (?, ?, ?, ?)", values)
+            db.commit()
+
+    def entity_of(self, page: dict[str, Any], site: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """The company a document is for (``how``: "manual", "site" or "text").
+
+        Chosen by hand, else its site's, else the one whose code, 統一編號 or
+        name is in the file name or on the document (a retailer's notice is
+        addressed to one company).
+        """
+        entities = {entity["id"]: entity for entity in self.entities()}
+        if not entities:
+            return None
+        if page.get("entity_id") in entities:
+            return {**entities[page["entity_id"]], "how": "manual"}
+        site = site if site is not None else self.site_of(page)
+        if site and site.get("entity_id") in entities:
+            return {**entities[site["entity_id"]], "how": "site"}
+        if page.get("kind") in (None, "taipower"):
+            return None  # a bill has its 電號
+        lines = (page.get("dataset") or {}).get("ocr_lines") or []
+        text = re.sub(r"[\s\-_()（）]", "", " ".join([str(page.get("filename") or ""), *(str(line.get("text", "")) for line in lines)])).upper()
+        flat = lambda word: re.sub(r"[\s\-_()（）]", "", str(word or "")).upper()
+        # A code or 統一編號 first: a group's companies often share most of a name.
+        for fields in (("code", "tax_id"), ("name",)):
+            found = [entity for entity in entities.values() if any(flat(entity.get(field)) and flat(entity.get(field)) in text for field in fields)]
+            if len(found) == 1:
+                return {**found[0], "how": "text"}
+        return None
+
+    def meter_entities(self) -> dict[str, dict[str, Any]]:
+        """Each meter's company, through its site."""
+        entities = {entity["id"]: entity for entity in self.entities()}
+        rows = self._query("SELECT meters.customer_number, sites.entity_id FROM meters JOIN sites ON sites.id = meters.site_id")
+        return {row["customer_number"]: entities[row["entity_id"]] for row in rows if row["entity_id"] in entities}
 
     # ------------------------------------------------------------ preferences
     def preference(self, user: str, key: str) -> Any:

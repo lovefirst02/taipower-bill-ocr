@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { EntitiesEditor } from "./EntitiesEditor";
 import { SitesEditor } from "./SitesEditor";
-import type { KeywordSetting, SettingsValues, SettingsView } from "../types";
+import type { Entity, KeywordSetting, SettingsValues, SettingsView } from "../types";
 
 const ENV_NAMES: Record<keyof SettingsValues, string> = {
   output_dir: "TAIPOWER_OUTPUT_DIR",
@@ -54,6 +55,7 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
   const [values, setValues] = useState<SettingsValues | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null);
+  const [entities, setEntities] = useState<Entity[]>([]);
 
   useEffect(() => {
     api.settings()
@@ -283,12 +285,22 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
         </section>
 
         <section>
+          <h4>Entities</h4>
+          <span className="hint">
+            The group&apos;s companies. Each has its sites, and its own retailers&apos; purchase notices: a notice counts only for its
+            company&apos;s meters (kWh on Taipower&apos;s list × the notice&apos;s price). A notice is matched by the code or 統一編號 in its
+            file name or text, or chosen on the review page.
+          </span>
+          <EntitiesEditor canEdit={view.can_edit} onSaved={setEntities} />
+        </section>
+
+        <section>
           <h4>Sites</h4>
           <span className="hint">
             Each site and its meters (電號). A bill is placed in the site its 電號 belongs to (00-12-3456-78-9 and 00123456789 are the same);
             documents without one are placed by hand on the review page. The Excel files&apos; Monthly sheet lists each bill per site and month.
           </span>
-          <SitesEditor canEdit={view.can_edit} />
+          <SitesEditor canEdit={view.can_edit} entities={entities} />
         </section>
 
         <section>

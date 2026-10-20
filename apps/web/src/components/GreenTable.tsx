@@ -339,14 +339,15 @@ function ServiceTable({ services }: { services: ServiceComparison[] }) {
     <>
     <table className="crosscheck">
       <thead>
-        <tr><th>Month</th><th>Service</th><th>Taipower kWh</th><th>Notice B</th><th>Diff</th><th>Taipower fees</th><th>Notice E</th><th>Diff</th></tr>
+        <tr><th>Month</th><th>Service</th><th>Entity</th><th>Taipower kWh</th><th>Notice B</th><th>Diff</th><th>Taipower fees</th><th>Notice E</th><th>Diff</th></tr>
       </thead>
       <tbody>
-        {services.map((service) => (
-          <tr key={`${service.month}-${service.service}`}>
+        {services.map((service, index) => (
+          <tr key={`${service.month}-${service.service}-${index}`}>
             <td>{service.month}</td>
             <td>{service.service ?? "—"}</td>
-            <td className="num">{service.has_list ? format(service.taipower_list_kwh) : "no list"}</td>
+            <td>{service.entity ?? (service.entity_unknown ? "? choose the Entity" : "—")}</td>
+            <td className="num">{!service.has_list ? "no list" : service.entity_unknown ? "—" : format(service.taipower_list_kwh)}</td>
             <td className="num">{format(service.notice?.kwh)}</td>
             <td className="num">{difference(service.kwh_difference)}</td>
             <td className="num" title={service.sections.join("、")}>

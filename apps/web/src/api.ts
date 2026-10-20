@@ -1,4 +1,4 @@
-import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, EnergyMix } from "./types";
+import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, EnergyMix, Entity } from "./types";
 
 type Sources = Record<string, ValueSource>;
 /** Warnings the reviewer kept (the others were cleared). */
@@ -6,6 +6,7 @@ type Kept = {
   issues: Issue[];
   mark_notes: string[];
   site_id?: number | null;
+  entity_id?: number | null;
   green?: {
     period: string;
     service?: string;
@@ -70,7 +71,10 @@ export const api = {
   submit: (id: number, user: string, row: Row, marks: Mark[], sources: Sources, kept: Kept) =>
     request<Item>(`/api/items/${id}/submit`, { method: "POST", ...json({ user, row, marks, sources, ...kept }) }),
   sites: () => request<Site[]>("/api/sites"),
-  saveSites: (sites: { id?: number; name: string; code: string; note: string; meters: string[] }[]) =>
+  entities: () => request<Entity[]>("/api/entities"),
+  saveEntities: (entities: { id?: number; name: string; code: string; tax_id: string; note: string }[]) =>
+    request<Entity[]>("/api/entities", { method: "PUT", ...json({ entities }) }),
+  saveSites: (sites: { id?: number; name: string; code: string; note: string; entity_id: number | null; meters: string[] }[]) =>
     request<Site[]>("/api/sites", { method: "PUT", ...json({ sites }) }),
   tags: (user: string) => request<Tags>(`/api/preferences?user=${encodeURIComponent(user)}`),
   saveTags: (user: string, tags: string[] | null) =>

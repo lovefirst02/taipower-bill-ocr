@@ -87,6 +87,8 @@ class ItemUpdate(BaseModel):
     mark_notes: list[str] | None = None
     # The site chosen by hand; null goes back to the one its 電號 belongs to.
     site_id: int | None = None
+    # The company a document is for (None: found from its site or its text).
+    entity_id: int | None = None
     # A green power statement as reviewed: {"period": ..., "lines": [...]}.
     green: dict[str, Any] | None = None
 
@@ -96,7 +98,20 @@ class Site(BaseModel):
     name: str
     code: str | None = None
     note: str | None = None
+    entity_id: int | None = None
     meters: list[str] = []
+
+
+class Entity(BaseModel):
+    id: int | None = None
+    name: str
+    code: str | None = None
+    tax_id: str | None = None
+    note: str | None = None
+
+
+class EntitiesUpdate(BaseModel):
+    entities: list[Entity]
 
 
 class SitesUpdate(BaseModel):
@@ -367,10 +382,38 @@ def create_app(
                 if number not in meters:
                     meters.append(number)
                 owner[number] = name
-            cleaned.append({"id": site.id, "name": name, "code": (site.code or "").strip(), "note": (site.note or "").strip(), "meters": meters})
+            if site.entity_id is not None and not any(entity["id"] == site.entity_id for entity in store.entities()):
+                raise HTTPException(400, f"{name}: unknown entity")
+            cleaned.append({"id": site.id, "name": name, "code": (site.code or "").strip(), "note": (site.note or "").strip(),
+                            "entity_id": site.entity_id, "meters": meters})
         store.replace_sites(cleaned)
         writer.write_all()  # the Monthly sheet names each bill's site
         return store.sites()
+
+    # -------------------------------------------------------------- entities
+    @app.get("/api/entities")
+    def entities() -> list[dict[str, Any]]:
+        return store.entities()
+
+    @app.put("/api/entities")
+    def save_entities(update: EntitiesUpdate, request: Request) -> list[dict[str, Any]]:
+        """The group's companies; like the sites, only on the server's PC."""
+        if not is_local(request):
+            raise HTTPException(403, "entities can only be changed on the computer running the server")
+        names: set[str] = set()
+        cleaned = []
+        for entity in update.entities:
+            name = entity.name.strip()
+            if not name:
+                raise HTTPException(400, "every entity needs a name")
+            if name in names:
+                raise HTTPException(400, f"two entities are called {name}")
+            names.add(name)
+            cleaned.append({"id": entity.id, "name": name, "code": (entity.code or "").strip(),
+                            "tax_id": (entity.tax_id or "").strip(), "note": (entity.note or "").strip()})
+        store.replace_entities(cleaned)
+        writer.write_all()
+        return store.entities()
 
     # ----------------------------------------------------------- preferences
     def tags_of(user: str) -> dict[str, Any]:
@@ -450,6 +493,7 @@ def create_app(
             "kind": page.get("kind") or documents.TAIPOWER,
             "sources": page.get("sources") or {},
             "site": store.site_of(page),
+            "entity": store.entity_of(page),
             # The bill per calendar month (split by days), as saved.
             "months": month_shares(page) if page.get("kind") != green.GREEN else [],
             "green": green_view(page),
@@ -517,6 +561,10 @@ def create_app(
             if update.site_id is not None and not any(site["id"] == update.site_id for site in store.sites()):
                 raise HTTPException(400, "unknown site")
             values["site_id"] = update.site_id
+        if "entity_id" in update.model_fields_set:
+            if update.entity_id is not None and not any(entity["id"] == update.entity_id for entity in store.entities()):
+                raise HTTPException(400, "unknown entity")
+            values["entity_id"] = update.entity_id
         if update.sources is not None:
             sources = dict(page.get("sources") or {})
             for column, source in update.sources.items():

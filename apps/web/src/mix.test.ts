@@ -3,7 +3,7 @@ import { energies, greenShare, groupBy, total, unitPrice } from "./mix";
 import type { MixRow } from "./types";
 
 const row = (values: Partial<MixRow>): MixRow => ({
-  month: "2026-08", meter: "1", document: null, site: "A", site_code: null, grey_kwh: null, green_kwh: {},
+  month: "2026-08", meter: "1", document: null, site: "A", site_code: null, entity: null, grey_kwh: null, green_kwh: {},
   green_total: 0, total_kwh: null, green_share: null, grey_cost: null, green_cost: null, green_source: null, ...values,
 });
 

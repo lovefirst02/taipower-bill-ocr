@@ -598,6 +598,18 @@ npm test           # 前端與後端測試
   `GreenPower`（售電明細每列依月份拆分）、`TransferList`（台電清單每列，含是否為本公司電號）、
   `GreenCheck`（各電號三方核對）、`GreenServices`（通知單 vs 台電清單）。綠電單據不會列入 `Bills` 與 `Monthly`。
 
+### Entity（集團內的公司）
+
+「Settings」→「Entities」設定集團內各公司（名稱、檔名上的代碼如 `TW21`、統一編號），每個 Site 選擇所屬的 Entity：
+Entity → 多個廠區／辦公室（Site）→ 多個電號。
+
+- 同一個台電轉供服務編號常有多家公司一起購電，每家各有自己的購電通知單。通知單依序以檢查頁上方「Entity」手動指定、
+  所屬 Site 的 Entity、檔名或單據內容中的代碼／統編判斷歸屬。
+- **只計入自己的部分**：計入費用 = 該 Entity 的電號在台電清單上的度數 × 該通知單每度單價（未稅合計 ÷ B），再依各電號度數
+  分到各廠區；不屬於設定 Entity 的通知單不計入。同一服務編號有多張通知單又判斷不出歸屬時不計入並提示指定。
+- 通知單 vs 台電清單的核對改為每張通知單一列，與其 Entity 的電號比對；Dashboard 可依 Entity 篩選並有「By entity」合計，
+  Excel 的 `EnergyMix` 與 `GreenServices` 多一欄 Entity。
+
 ### Dashboard：灰電與綠電
 
 上方「Dashboard」按鈕顯示每月、每個據點的用電組成（所有使用者的單據；可勾選只看已送出的）：

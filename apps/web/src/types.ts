@@ -76,8 +76,26 @@ export interface Site {
   name: string;
   code: string | null;
   note: string | null;
+  /** The company of the group the site belongs to. */
+  entity_id: number | null;
   /** 電號, digits only. */
   meters: string[];
+}
+
+/** A company of the group (a legal entity): it has sites, and its own retailer's notices. */
+export interface Entity {
+  id: number;
+  name: string;
+  /** e.g. TW21, as written on file names. */
+  code: string | null;
+  /** 統一編號. */
+  tax_id: string | null;
+  note: string | null;
+}
+
+/** A document's company: chosen by hand, its site's, or found in its file name or text. */
+export interface ItemEntity extends Entity {
+  how: "manual" | "site" | "text";
 }
 
 /** A bill's site: chosen by hand, or the one its 電號 belongs to. */
@@ -148,6 +166,10 @@ export interface MeterComparison {
 export interface ServiceComparison {
   month: string;
   service: string | null;
+  /** The notice's company; its meters are the ones compared. */
+  entity: string | null;
+  /** Several notices for the service, none told apart. */
+  entity_unknown: boolean;
   has_list: boolean;
   /** The fee tables Taipower's list was read with (轉供輸電費清單, ...). */
   sections: string[];
@@ -213,6 +235,7 @@ export interface Item {
   kind: DocumentKind;
   sources: Record<string, ValueSource>;
   site: ItemSite | null;
+  entity: ItemEntity | null;
   months: MonthShare[];
   /** A retailer's green power statement (kind "green"). */
   green: GreenView | null;
@@ -271,6 +294,7 @@ export interface MixRow {
   document: string | null;
   site: string | null;
   site_code: string | null;
+  entity: string | null;
   grey_kwh: number | null;
   /** Green kWh by energy: 太陽能, 風力, 未分類 ... */
   green_kwh: Record<string, number>;
@@ -297,9 +321,16 @@ export interface MixDocument {
   /** 餘電 charges within the cost. */
   surcharge: number | null;
   /** Which of its numbers count: a Taipower list gives kWh, retailers give the cost. */
-  counted: "kwh" | "cost" | "both";
+  counted: "kwh" | "cost" | "both" | "share";
   /** Left out: the same document as this one. */
   duplicate_of: string | null;
+  entity: string | null;
+  /** Why it is not counted (another company's notice, ...). */
+  note: string | null;
+  /** A notice: its company's kWh in Taipower's list × its price. */
+  counted_kwh?: number | null;
+  counted_cost?: number | null;
+  unit_price?: number | null;
 }
 
 export interface EnergyMix {
