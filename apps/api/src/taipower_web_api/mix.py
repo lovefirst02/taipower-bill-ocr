@@ -82,6 +82,17 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
     """Per month and meter: grey and green kWh (by energy) and their costs."""
     pages = [page for page in pages if not page.get("hidden")]
     ours = green.company_meters(store)
+    # The same document uploaded twice (or by two people) counts once.
+    seen_documents: dict[Any, Mapping[str, Any]] = {}
+    duplicates: dict[int, Mapping[str, Any]] = {}
+    for page in sorted(pages, key=lambda item: item["id"]):
+        key = _fingerprint(page)
+        if key in seen_documents:
+            duplicates[page["id"]] = seen_documents[key]
+        else:
+            seen_documents[key] = page
+    ledger = [_ledger_entry(page, ours, duplicates.get(page["id"])) for page in sorted(pages, key=lambda item: item["id"])]
+    pages = [page for page in pages if page["id"] not in duplicates]
     entries: dict[tuple[str, str], dict[str, Any]] = {}
     notes: list[str] = []
 
@@ -224,10 +235,65 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
         })
     return {
         "rows": rows,
+        "documents": ledger,
+        "duplicates": len(duplicates),
         "unclassified_services": sorted({service for _, service in unclassified}),
         "notes": notes,
         "sites_set": bool(ours),
     }
+
+
+def _fingerprint(page: Mapping[str, Any]) -> Any:
+    """What makes two items the same document: its type, period and contents."""
+    if page.get("kind") == green.GREEN:
+        statement = page.get("green") or {}
+        kind = green.type_of(statement)
+        if kind == green.STATEMENT:
+            body = tuple(sorted((str(line.get("meter")), str(line.get("kwh")), str(line.get("cost"))) for line in statement.get("lines") or []))
+        elif kind == green.TRANSFER_LIST:
+            body = tuple(sorted((str(row.get("section")), str(row.get("user_meter")), str(row.get("generator")), str(row.get("kwh")), str(row.get("fee")))
+                                for row in statement.get("rows") or []))
+        else:
+            values = statement.get("values") or {}
+            body = (str(values.get("kwh")), str(values.get("untaxed")))
+        return (kind, statement.get("period"), statement.get("service"), body)
+    row = page.get("row") or {}
+    return ("bill", meter_number(row.get("Custom No. 電號")) or page.get("upload_id"), row.get("Billing Period 計費期間"),
+            row.get("稅前應繳總金額"), row.get("應繳總金額"), _total(row, _BILLED_KWH), row.get(documents.USAGE))
+
+
+def _sum(values: Iterable[Any]) -> int | float | None:
+    numbers = [_number(value) for value in values]
+    numbers = [value for value in numbers if value is not None]
+    return _plain(sum(numbers, Decimal(0))) if numbers else None
+
+
+def _ledger_entry(page: Mapping[str, Any], ours: set[str], duplicate_of: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What one document adds: its kWh and cost as the dashboard counts them."""
+    entry: dict[str, Any] = {"id": page["id"], "filename": page.get("filename"), "page": page.get("page_number"), "user": page.get("user"),
+                             "status": page.get("status"),
+                             "duplicate_of": None if duplicate_of is None else f"{duplicate_of.get('filename')} (#{duplicate_of['id']})"}
+    if page.get("kind") == green.GREEN:
+        statement = page.get("green") or {}
+        kind = green.type_of(statement)
+        entry.update(type=kind, period=statement.get("period"), service=statement.get("service"))
+        if kind == green.STATEMENT:
+            lines = [line for line in statement.get("lines") or [] if line.get("meter") and (not ours or line["meter"] in ours)]
+            entry.update(kwh=_sum(line.get("kwh") for line in lines if is_green(line)), cost=_sum(line.get("cost") for line in lines),
+                         surcharge=_sum(line.get("cost") for line in lines if not is_green(line)), counted="cost")
+        elif kind == green.TRANSFER_LIST:
+            rows = [row for row in statement.get("rows") or [] if row.get("user_meter") and (not ours or row["user_meter"] in ours)]
+            pairs = {(row["user_meter"], row.get("generator")): row.get("kwh") for row in rows}
+            entry.update(kwh=_sum(pairs.values()), cost=_sum(row.get("fee") for row in rows), surcharge=None, counted="kwh")
+        else:
+            values = statement.get("values") or {}
+            entry.update(kwh=values.get("kwh"), cost=values.get("untaxed"), surcharge=values.get("surplus_charge"), counted="cost")
+    else:
+        row = page.get("row") or {}
+        billed = _total(row, _BILLED_KWH)
+        entry.update(type="bill", period=row.get("Billing Period 計費期間"), service=meter_number(row.get("Custom No. 電號")),
+                     kwh=billed if billed is not None else row.get(documents.USAGE), cost=row.get("稅前應繳總金額"), surcharge=None, counted="both")
+    return entry
 
 
 def mix_rows(pages: Iterable[Mapping[str, Any]], store: Store, service_energy: Mapping[str, str]) -> list[list[Any]]:

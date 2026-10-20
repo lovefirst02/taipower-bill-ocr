@@ -282,8 +282,30 @@ export interface MixRow {
   green_source: "transfer_list" | "statement" | "bill" | null;
 }
 
+/** What one document adds to the dashboard. */
+export interface MixDocument {
+  id: number;
+  filename: string;
+  page: number | null;
+  user: string;
+  status: string;
+  type: "bill" | "statement" | "notice" | "transfer_list";
+  period: string | null;
+  service: string | null;
+  kwh: number | null;
+  cost: number | null;
+  /** 餘電 charges within the cost. */
+  surcharge: number | null;
+  /** Which of its numbers count: a Taipower list gives kWh, retailers give the cost. */
+  counted: "kwh" | "cost" | "both";
+  /** Left out: the same document as this one. */
+  duplicate_of: string | null;
+}
+
 export interface EnergyMix {
   rows: MixRow[];
+  documents: MixDocument[];
+  duplicates: number;
   unclassified_services: string[];
   notes: string[];
   sites_set: boolean;

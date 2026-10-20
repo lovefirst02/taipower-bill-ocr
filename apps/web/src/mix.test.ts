@@ -29,7 +29,7 @@ describe("dashboard totals", () => {
 
   it("works out unit prices", () => {
     const sum = total(rows);
-    expect(unitPrice(sum.grey_cost, sum.grey_kwh_costed)).toBe(4);
+    expect(unitPrice(sum.grey_cost_priced, sum.grey_kwh_costed)).toBe(4);
     expect(unitPrice(1, 0)).toBeNull();
   });
 

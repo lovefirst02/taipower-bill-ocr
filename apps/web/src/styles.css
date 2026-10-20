@@ -306,3 +306,5 @@ main { flex: 1; min-width: 0; display: flex; }
 .green-table tr.section button.link { margin-left: 10px; font-size: 12px; }
 .add-table { display: flex; gap: 6px; margin-top: 6px; }
 .add-table input { flex: 1; max-width: 260px; padding: 3px 6px; }
+.dash-table tr.duplicate td { color: var(--muted); text-decoration: line-through; }
+.dash-table tr.duplicate td:nth-child(8) { text-decoration: none; color: var(--warn); }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { energies, greenShare, groupBy, total, unitPrice, SOLAR, UNCLASSIFIED, WIND } from "../mix";
 import type { MixTotal } from "../mix";
-import type { EnergyMix, MixRow } from "../types";
+import type { EnergyMix, MixDocument, MixRow } from "../types";
 
 const GREY = "#9aa0a6";
 const COLORS: Record<string, string> = { [SOLAR]: "#f2a900", [WIND]: "#1a9bb5", [UNCLASSIFIED]: "#9ccc65" };
@@ -74,8 +74,8 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
               <Kpi key={energy} label={`${energy}`} value={`${kwh(sum.green_kwh[energy])} kWh`} color={colorOf(energy, kinds)} />
             ))}
             <Kpi label="Green share 綠電占比" value={percent(greenShare(sum))} />
-            <Kpi label="Grey cost (before tax)" value={sum.with_bill ? money(sum.grey_cost) : "—"} note={`${price(unitPrice(sum.grey_cost, sum.grey_kwh_costed))} NT$/kWh`} />
-            <Kpi label="Green cost (untaxed)" value={money(sum.green_cost)} note={`${price(unitPrice(sum.green_cost, sum.green_kwh_costed))} NT$/kWh`} />
+            <Kpi label="Grey cost (before tax)" value={sum.with_bill ? money(sum.grey_cost) : "—"} note={`${price(unitPrice(sum.grey_cost_priced, sum.grey_kwh_costed))} NT$/kWh`} />
+            <Kpi label="Green cost (untaxed)" value={money(sum.green_cost)} note={`${price(unitPrice(sum.green_cost_priced, sum.green_kwh_costed))} NT$/kWh`} />
           </div>
 
           <section className="dash-card">
@@ -97,6 +97,11 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
             <summary>Each meter and month ({rows.length})</summary>
             <MeterTable rows={rows} kinds={kinds} />
           </details>
+
+          <details className="dash-card" open={mix.duplicates > 0}>
+            <summary>Documents counted ({mix.documents.length - mix.duplicates}{mix.duplicates ? `, ${mix.duplicates} duplicate(s) left out` : ""})</summary>
+            <DocumentTable documents={mix.documents} />
+          </details>
         </>
       )}
     </div>
@@ -109,6 +114,7 @@ function Warnings({ mix, sum, onOpenSettings }: { mix: EnergyMix; sum: MixTotal;
   if (mix.unclassified_services.length) {
     items.push(<>Energy not known for service {mix.unclassified_services.join(", ")}: shown as 未分類. <button className="link" onClick={onOpenSettings}>Settings → Green power services</button></>);
   }
+  if (mix.duplicates) items.push(<>{mix.duplicates} document(s) uploaded more than once: counted once (see Documents counted below).</>);
   if (sum.without_bill) items.push(<>{sum.without_bill} meter-month(s) have green power but no bill yet: left out of total usage and the green share.</>);
   if (!items.length && !mix.notes.length) return null;
   return (
@@ -200,9 +206,39 @@ function TotalsTable({ groups, overall, kinds, first }: { groups: [string, MixTo
               <td className="num">{sum.total_kwh ? kwh(sum.total_kwh) : "—"}</td>
               <td className="num">{percent(greenShare(sum))}</td>
               <td className="num">{sum.with_bill ? money(sum.grey_cost) : "—"}</td>
-              <td className="num">{price(unitPrice(sum.grey_cost, sum.grey_kwh_costed))}</td>
+              <td className="num">{price(unitPrice(sum.grey_cost_priced, sum.grey_kwh_costed))}</td>
               <td className="num">{money(sum.green_cost)}</td>
-              <td className="num">{price(unitPrice(sum.green_cost, sum.green_kwh_costed))}</td>
+              <td className="num">{price(unitPrice(sum.green_cost_priced, sum.green_kwh_costed))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const TYPE_NAMES: Record<string, string> = { bill: "Bill / other", statement: "售電明細", notice: "購電通知單", transfer_list: "台電清單" };
+
+/** Every document with what it adds, so the totals can be traced back. */
+function DocumentTable({ documents }: { documents: MixDocument[] }) {
+  return (
+    <div className="green-scroll">
+      <table className="dash-table">
+        <thead>
+          <tr><th>File</th><th>Type</th><th>Period</th><th>Service / 電號</th><th>kWh</th><th>Cost</th><th>of which 餘電</th><th>Counted</th><th>Uploaded by</th></tr>
+        </thead>
+        <tbody>
+          {documents.map((doc) => (
+            <tr key={doc.id} className={doc.duplicate_of ? "duplicate" : ""}>
+              <td title={`#${doc.id}`}>{doc.filename}{doc.page ? ` p.${doc.page}` : ""}</td>
+              <td>{TYPE_NAMES[doc.type] ?? doc.type}</td>
+              <td>{doc.period ?? "—"}</td>
+              <td>{doc.service ?? "—"}</td>
+              <td className="num">{kwh(doc.kwh)}</td>
+              <td className="num">{money(doc.cost)}</td>
+              <td className="num">{doc.surcharge ? money(doc.surcharge) : ""}</td>
+              <td>{doc.duplicate_of ? `No — same as ${doc.duplicate_of}` : doc.counted === "kwh" ? "kWh (fees are in the retailer's cost)" : doc.counted === "cost" ? "Cost" : "kWh and cost"}</td>
+              <td>{doc.user}</td>
             </tr>
           ))}
         </tbody>

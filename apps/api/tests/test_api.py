@@ -1155,6 +1155,23 @@ class ApiTests(unittest.TestCase):
         sheet = {row[header.index("電號")]: dict(zip(header, row)) for row in workbook["EnergyMix"].iter_rows(min_row=2, values_only=True)}
         self.assertEqual((sheet["05785204210"]["灰電度數"], sheet["05785204210"]["太陽能度數"]), (15000, 556983))
 
+    def test_a_document_uploaded_twice_is_counted_once(self):
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
+        self.upload_as("list.png", transfer_list())
+        self.upload_as("notice.png", purchase_notice())
+        once = self.client.get("/api/dashboard").json()
+        self.upload_as("notice again.png", purchase_notice(), user="Ben")
+        self.upload_as("list again.png", transfer_list(), user="Ben")
+        twice = self.client.get("/api/dashboard").json()
+        cost = lambda mix: round(sum(row["green_cost"] or 0 for row in mix["rows"]), 2)
+        kwh = lambda mix: sum(row["green_total"] for row in mix["rows"])
+        self.assertEqual((cost(twice), kwh(twice), twice["duplicates"]), (cost(once), kwh(once), 2))
+        self.assertEqual(cost(once), 3809716)
+        left_out = [doc for doc in twice["documents"] if doc["duplicate_of"]]
+        self.assertEqual(sorted(doc["filename"] for doc in left_out), ["list again.png", "notice again.png"])
+        notice = next(doc for doc in once["documents"] if doc["type"] == "notice")
+        self.assertEqual((notice["kwh"], notice["cost"], notice["counted"]), (650202, 3809716, "cost"))
+
     def test_green_services_setting_needs_an_energy(self):
         response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})
         self.assertEqual(response.status_code, 400)

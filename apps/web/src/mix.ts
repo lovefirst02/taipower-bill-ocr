@@ -14,8 +14,10 @@ export interface MixTotal {
   green_in_total: number;
   grey_cost: number;
   green_cost: number;
-  /** For unit prices: kWh of rows that have a cost. */
+  /** For unit prices: the cost and kWh of rows that have both. */
+  grey_cost_priced: number;
   grey_kwh_costed: number;
+  green_cost_priced: number;
   green_kwh_costed: number;
   /** Rows with green power but no bill (their grey power is unknown). */
   without_bill: number;
@@ -25,7 +27,7 @@ export interface MixTotal {
 
 const empty = (): MixTotal => ({
   grey_kwh: 0, green_kwh: {}, green_total: 0, total_kwh: 0, green_in_total: 0,
-  grey_cost: 0, green_cost: 0, grey_kwh_costed: 0, green_kwh_costed: 0, without_bill: 0, with_bill: 0,
+  grey_cost: 0, green_cost: 0, grey_cost_priced: 0, grey_kwh_costed: 0, green_cost_priced: 0, green_kwh_costed: 0, without_bill: 0, with_bill: 0,
 });
 
 /** Integers stay exact; costs shared by kWh keep two decimals. */
@@ -46,11 +48,18 @@ export function total(rows: MixRow[]): MixTotal {
     }
     if (row.grey_cost !== null) {
       sum.grey_cost = add(sum.grey_cost, row.grey_cost);
-      sum.grey_kwh_costed = add(sum.grey_kwh_costed, row.grey_kwh ?? 0);
+      if (row.grey_kwh) {
+        sum.grey_cost_priced = add(sum.grey_cost_priced, row.grey_cost);
+        sum.grey_kwh_costed = add(sum.grey_kwh_costed, row.grey_kwh);
+      }
     }
     if (row.green_cost !== null) {
       sum.green_cost = add(sum.green_cost, row.green_cost);
-      sum.green_kwh_costed = add(sum.green_kwh_costed, row.green_total);
+      // A cost without kWh (a notice without Taipower's list) has no unit price.
+      if (row.green_total) {
+        sum.green_cost_priced = add(sum.green_cost_priced, row.green_cost);
+        sum.green_kwh_costed = add(sum.green_kwh_costed, row.green_total);
+      }
     }
   }
   return sum;
