@@ -56,6 +56,47 @@ class TransferListTests(unittest.TestCase):
         self.assertIn("0.9778", row.note)
         self.assertEqual(check_row({"kwh": 100, "rate": 0.0778, "fee": 9})["status"], "check")
 
+    def test_rows_are_read_by_their_look_when_the_header_is_unreadable(self):
+        # Small print under a stamp: the header comes out as nonsense, the
+        # photo is at a slant, and some rates and a small fee are lost.
+        def slanted(top, row):
+            xs = (50, 90, 190, 280, 370, 520, 590, 710)
+            return [Line(text, x, top - x * 0.03, max(30, len(text) * 9), 20) for text, x in zip(row, xs) if text]
+
+        lines = [
+            Line("台湾電力公司", 326, 504, 150, 26), Line("费用清單", 332, 546, 120, 30),
+            Line("服務编就：1-11210-08-00210", 5, 603, 306, 32), Line("2026年07月", 656, 604, 83, 21),
+            Line("棒供輸電费清單", 3, 639, 121, 26),
+            Line("当月联格使用量(度）", 441, 665, 114, 20), Line("普用(丸)", 664, 662, 55, 21),
+            *slanted(710, ("1", "05785193319", "KU20021670", "08376003416", "TI20850896", "104.210", "", "8.108")),
+            *slanted(750, ("2", "05785204210", "GB21900276", "08376003416", "TI20850896", "650.995", "0.0778", "50.647")),
+            *slanted(790, ("3", "", "", "08376003416", "TI20850896", "27.296", "0.0778", "2.124")),
+            *slanted(830, ("4", "10505503331", "TC18742828", "08376003416", "TI20850896", "3,024", "0.07T8", "")),
+        ]
+        found = read_transfer_list(lines)
+        self.assertEqual((found.service, found.period), ("1-11210-08-00210", "2026/07/01~2026/07/31"))
+        rows = [row.as_json() for row in found.rows]
+        self.assertEqual([(row["section"], row["user_meter"], row["generator"], row["kwh"], row["fee"]) for row in rows], [
+            ("轉供輸電費清單", "05785193319", "08376003416", 104210, 8108),
+            ("轉供輸電費清單", "05785204210", "08376003416", 650995, 50647),
+            # A user meter OCR missed is not guessed from the row above.
+            ("轉供輸電費清單", None, "08376003416", 27296, 2124),
+            ("轉供輸電費清單", "10505503331", "08376003416", 3024, None),
+        ])
+        self.assertIn("rate not read", rows[0]["note"])  # the section's rate gives the printed fee
+        self.assertEqual(rows[0]["rate"], 0.0778)
+        self.assertIn("not read", rows[2]["note"])
+        self.assertEqual(check_row(rows[3])["status"], "incomplete")
+
+    def test_a_table_running_onto_the_next_page_keeps_its_section(self):
+        next_page = [Line(line.text, line.x, line.y, line.width, line.height, 2)
+                     for line in table(100, [("2", "10518691508", "TA20855027", "08376141004", "TI19701899", "2,006", "0.1788", "359")])]
+        first_page = [Line(line.text, line.x, line.y, line.width, line.height, 1) for line in WIND_LIST]
+        rows = read_transfer_list(first_page + next_page).rows
+        self.assertEqual((rows[-1].section, rows[-1].user_meter, rows[-1].fee, rows[-1].page), ("轉供配電費清單", "10518691508", 359, 2))
+        # Read on its own, a page without a title or header is not a list.
+        self.assertIsNone(read_transfer_list(next_page))
+
     def test_other_pages_are_not_lists(self):
         self.assertIsNone(read_transfer_list([Line("本月消費明細如下：", 0, 0, 200, 30)]))
 

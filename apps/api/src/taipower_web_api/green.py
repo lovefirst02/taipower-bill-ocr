@@ -48,20 +48,71 @@ def type_of(statement: Mapping[str, Any] | None) -> str:
 
 
 # ------------------------------------------------------------------ reading
+def page_type(lines: list) -> str | None:
+    """Which green power document a page is (on its own), or None."""
+    if read_transfer_list(lines) is not None:
+        return TRANSFER_LIST
+    if read_notice(lines) is not None:
+        return NOTICE
+    if read_statement(lines) is not None:
+        return STATEMENT
+    return None
+
+
+def group_pages(pages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Green power documents among an upload's pages, in order: each one's pages.
+
+    A transfer fee list or a retailer's statement runs over pages while its
+    table goes on (a new 服務編號 or month starts another list). Other
+    pages end a document.
+    """
+    readers = {TRANSFER_LIST: read_transfer_list, STATEMENT: read_statement}
+    size = lambda read: len(getattr(read, "rows", None) or getattr(read, "lines", None) or [])
+    lines_of = lambda group: [line for other in group for line in lines_from_dataset(other["dataset"], other["page_number"])]
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] | None = None
+    kind: str | None = None
+    read: Any = None
+    for page in pages:
+        lines = lines_from_dataset(page["dataset"], page["page_number"])
+        own = page_type(lines)
+        if current is not None and kind in readers and own in (None, kind):
+            alone = readers[kind](lines) if own else None
+            # Taipower's next list (another service or month) starts anew.
+            same = kind != TRANSFER_LIST or alone is None or (
+                alone.service in (None, read.service) and alone.period in (None, read.period))
+            together = readers[kind](lines_of([*current, page])) if same else None
+            if together is not None and size(together) > size(read):
+                current.append(page)
+                read = together
+                continue
+        if own is not None:
+            current, kind = [page], own
+            read = readers[own](lines) if own in readers else None
+            groups.append(current)
+        else:
+            current, kind, read = None, None, None
+    return groups
+
+
 def detect(store: Store, first: dict[str, Any], settings: Settings) -> dict[str, Any] | None:
     """Page columns for a green power document, or None when the upload is not one."""
     pages = store.item_pages(first)
     all_lines = [line for page in pages for line in lines_from_dataset(page["dataset"], page["page_number"])]
-    for page in pages:
+    for at, page in enumerate(pages):
         lines = lines_from_dataset(page["dataset"], page["page_number"])
-        found = _read(lines, all_lines, page)
+        if page_type(lines) is None:
+            continue
+        # A transfer fee list may run onto the next pages.
+        group = group_pages(pages[at:])[0]
+        found = _read(lines, all_lines, page, group)
         if found is None:
             continue
         statement, marks = found
         row: dict[str, Any] = {column: None for column in COLUMNS}
         row.update({"Billing Period 計費期間": statement.get("period"), "來源檔案": first["filename"], "頁碼": first["page_number"]})
         for mark in marks:
-            if page["id"] != first["id"]:
+            if "page" not in mark and page["id"] != first["id"]:
                 mark["page"] = page["page_number"]
         return {
             "kind": GREEN, "is_bill": True, "row": row, "ocr_row": dict(row), "green": statement,
@@ -71,14 +122,23 @@ def detect(store: Store, first: dict[str, Any], settings: Settings) -> dict[str,
     return None
 
 
-def _read(lines: list, all_lines: list, page: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+def _read(lines: list, all_lines: list, page: dict[str, Any], group: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
     size = (page["image_width"], page["image_height"])
     taken = [(line["x"], line["y"], line["width"], line["height"]) for line in page["dataset"].get("ocr_lines") or []]
-    listed = read_transfer_list(lines)
+    group = group or [page]
+    listed = read_transfer_list([line for other in group for line in lines_from_dataset(other["dataset"], other["page_number"])])
     if listed is not None:
         rows = [row.as_json() for row in listed.rows]
         statement = {"type": TRANSFER_LIST, "service": listed.service, "period": listed.period, "rows": rows}
-        marks = _column_marks([row["box"] for row in rows if row.get("box")], KWH_LABEL, size, taken)
+        # A highlight over the rows on each page.
+        marks = []
+        for other in group:
+            on_page = [row["box"] for row in rows if row.get("box") and row.get("page") == other["page_number"]]
+            other_taken = [(line["x"], line["y"], line["width"], line["height"]) for line in other["dataset"].get("ocr_lines") or []]
+            for mark in _column_marks(on_page, KWH_LABEL, (other["image_width"], other["image_height"]), other_taken):
+                if other["id"] != page["id"]:
+                    mark["page"] = other["page_number"]
+                marks.append(mark)
         return statement, marks
     notice = read_notice(lines)
     if notice is not None:
@@ -89,14 +149,21 @@ def _read(lines: list, all_lines: list, page: dict[str, Any]) -> tuple[dict[str,
             if name in notice.boxes:
                 marks += _tag(_highlight_and_label(label, _pad(notice.boxes[name]), size, taken, []), f"green.{name}")
         return statement, marks
-    table = read_statement(lines)
+    table = read_statement([line for other in group for line in lines_from_dataset(other["dataset"], other["page_number"])])
     if table is not None:
         statement = {"type": STATEMENT, "period": statement_period(all_lines), "lines": [line.as_json() for line in table.lines]}
+        # The kWh and charge columns marked on each page of the table.
         marks = []
-        for column, label in (("kwh", KWH_LABEL), ("cost", COST_LABEL)):
-            boxes = [line.cells[column] for line in table.lines if column in line.cells]
-            if boxes:
-                marks += _tag(_highlight_and_label(label, _pad(_span(boxes)), size, taken, []), f"green.{column}")
+        for other in group:
+            other_taken = [(line["x"], line["y"], line["width"], line["height"]) for line in other["dataset"].get("ocr_lines") or []]
+            for column, label in (("kwh", KWH_LABEL), ("cost", COST_LABEL)):
+                boxes = [line.cells[column] for line in table.lines if column in line.cells and line.page == other["page_number"]]
+                if not boxes:
+                    continue
+                for mark in _tag(_highlight_and_label(label, _pad(_span(boxes)), (other["image_width"], other["image_height"]), other_taken, []), f"green.{column}"):
+                    if other["id"] != page["id"]:
+                        mark["page"] = other["page_number"]
+                    marks.append(mark)
         return statement, marks
     return None
 

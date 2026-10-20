@@ -33,6 +33,12 @@ COLUMNS: dict[str, tuple[str, ...]] = {
 }
 _SECTION = re.compile(r"(轉供.{1,8}費清單|.{2,8}費清單)")
 _SERVICE = re.compile(r"服務編號\s*[:：]?\s*([0-9][0-9\-\s]{6,})")
+# A service number on its own, when OCR garbles the words before it (服務编就).
+_SERVICE_NUMBER = re.compile(r"(?<!\d)(\d-\d{5}-\d{2}-\d{5})(?!\d)")
+# A row's cells: a meter (11 digits), a device (letters and digits) and a rate (0.0778).
+_METER = re.compile(r"^\d{10,11}$")
+_DEVICE = re.compile(r"^[A-Z]{1,3}\d{6,10}$")
+_RATE = re.compile(r"^\d?\.\d{4,5}$")
 _MONTH = re.compile(r"(\d{3,4})\s*年\s*(\d{1,2})\s*月")
 
 
@@ -78,13 +84,18 @@ def _code(text: str) -> str | None:
 
 
 def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
-    """The list's fee tables, or None when the page is not a transfer fee list."""
+    """The list's fee tables, or None when the lines are not a transfer fee list.
+
+    The lines may span pages: a table running onto the next page keeps its
+    section, and its columns when that page repeats no header.
+    """
     lines = [line for line in lines if line.text.strip()]
-    if not any("清單" in tables.normal(line.text) for line in lines):
-        return None
-    service = next((re.sub(r"\s", "", match.group(1)) for line in lines if (match := _SERVICE.search(tables.normal(line.text)))), None)
+    titled = any("清單" in tables.normal(line.text) for line in lines)
+    ordered = sorted(lines, key=lambda line: (line.page or 0, line.y))
+    service = next((re.sub(r"\s", "", match.group(1)) for line in ordered if (match := _SERVICE.search(tables.normal(line.text)))), None)
+    service = service or next((match.group(1) for line in ordered if (match := _SERVICE_NUMBER.search(tables.normal(line.text)))), None)
     period = None
-    for line in lines:
+    for line in ordered:
         if (found := _MONTH.search(line.text)) is not None:
             year, month = int(found.group(1)), int(found.group(2))
             if 1 <= month <= 12:
@@ -92,39 +103,171 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
                 period = f"{year}/{month:02d}/01~{year}/{month:02d}/{days:02d}"
                 break
     result = TransferList(service=service, period=period)
-    sections = sorted(
-        (line for line in lines if _SECTION.search(tables.normal(line.text)) and "費用清單" not in tables.normal(line.text)),
-        key=lambda line: (line.page or 0, line.y),
-    )
-    anchors = [line for line in lines if tables.match(line.text, COLUMNS) == "kwh"]
-    for anchor in sorted(anchors, key=lambda line: (line.page or 0, line.y)):
-        headers = tables.header(lines, anchor, COLUMNS)
-        if not {"kwh", "fee"} <= headers.keys() or not ({"user_meter", "generator"} & headers.keys()):
-            continue
-        # The section title just above this table, and where the next one starts.
-        above = [section for section in sections if section.page == anchor.page and section.y < anchor.y]
-        title = tables.normal(above[-1].text) if above else "轉供費"
-        below = [section.y for section in sections if section.page == anchor.page and section.y > anchor.y]
-        bottom = min(below) if below else float("inf")
-        centres = {name: sum(l.x + l.width / 2 for l in found) / len(found) for name, found in headers.items()}
-        top = max(line.y + line.height for found in headers.values() for line in found)
-        meter = None
-        for cells in tables.rows(lines, anchor.page, top, bottom, centres, anchor.height):
-            kwh = tables.number(tables.text_of(cells, "kwh"), integer=True)
-            fee = tables.number(tables.text_of(cells, "fee"), integer=True)
-            if kwh is None or fee is None:
+    sections = [line for line in ordered if _SECTION.search(tables.normal(line.text)) and "費用清單" not in tables.normal(line.text)]
+    titles = {id(line): _section_name(line.text) for line in sections}
+    section: str | None = None
+    centres: dict[str, float] | None = None
+    row_height = 0.0
+    meter: str | None = None
+    for page in sorted({line.page for line in lines}, key=lambda number: number or 0):
+        on_page = [line for line in lines if line.page == page]
+        page_sections = [line for line in sections if line.page == page]
+        found_tables = []
+        for anchor in sorted((line for line in on_page if tables.match(line.text, COLUMNS) == "kwh"), key=lambda line: line.y):
+            headers = tables.header(on_page, anchor, COLUMNS)
+            if not {"kwh", "fee"} <= headers.keys() or not ({"user_meter", "generator"} & headers.keys()):
                 continue
-            # A meter with several generators is written once, on its first row.
-            meter = _digits(tables.text_of(cells, "user_meter")) or meter
-            result.rows.append(TransferRow(
-                section=title, user_meter=meter, generator=_digits(tables.text_of(cells, "generator")),
-                kwh=kwh, rate=tables.number(tables.text_of(cells, "rate")), fee=fee,
-                user_device=_code(tables.text_of(cells, "user_device")),
-                generator_device=_code(tables.text_of(cells, "generator_device")),
-                page=anchor.page, box=tables.union([line.box for found in cells.values() for line in found]),
-            ))
+            # Without a title such as 費用清單, only Taipower's own header will do.
+            if not titled and not {"user_meter", "generator"} <= headers.keys():
+                continue
+            top = max(line.y + line.height for found in headers.values() for line in found)
+            found_tables.append((anchor.y, top, {name: sum(l.x + l.width / 2 for l in found) / len(found) for name, found in headers.items()}, anchor.height))
+        if centres is not None:
+            # The previous page's table, carried on above this page's first header or title.
+            found_tables.insert(0, (float("-inf"), float("-inf"), centres, row_height))
+        for index, (anchor_y, top, columns, height) in enumerate(found_tables):
+            above = [line for line in page_sections if line.y < anchor_y]
+            if above and titles[id(above[-1])] != section:
+                section, meter = titles[id(above[-1])], None
+            later = [line.y for line in page_sections if line.y > anchor_y]
+            if index + 1 < len(found_tables):
+                later.append(found_tables[index + 1][0])
+            bottom = min(later) if later else float("inf")
+            for cells in tables.rows(on_page, page, top, bottom, columns, height):
+                kwh = tables.number(tables.text_of(cells, "kwh"), integer=True)
+                fee = tables.number(tables.text_of(cells, "fee"), integer=True)
+                if kwh is None or fee is None:
+                    continue
+                # A meter with several generators is written once, on its first row.
+                meter = _digits(tables.text_of(cells, "user_meter")) or meter
+                result.rows.append(TransferRow(
+                    section=section or "轉供費", user_meter=meter, generator=_digits(tables.text_of(cells, "generator")),
+                    kwh=kwh, rate=tables.number(tables.text_of(cells, "rate")), fee=fee,
+                    user_device=_code(tables.text_of(cells, "user_device")),
+                    generator_device=_code(tables.text_of(cells, "generator_device")),
+                    page=page, box=tables.union([line.box for found in cells.values() for line in found]),
+                ))
+            if anchor_y != float("-inf"):
+                centres, row_height = columns, height
+        if (titled or result.rows) and not any(row.page == page for row in result.rows):
+            # No header could be read (small print, a stamp over it): each
+            # row is still told by its cells' look.
+            for cells_line in _signature_rows(on_page):
+                above = [line for line in page_sections if line.y < cells_line["y"]]
+                if above and titles[id(above[-1])] != section:
+                    section, meter = titles[id(above[-1])], None
+                # Not carried down: a meter OCR missed must not take the row above's.
+                result.rows.append(TransferRow(
+                    section=section or "轉供費", user_meter=cells_line["user_meter"], generator=cells_line["generator"],
+                    note=None if cells_line["user_meter"] else "用戶電號 not read: type it in",
+                    kwh=cells_line["kwh"], rate=cells_line["rate"], fee=cells_line["fee"],
+                    user_device=cells_line["user_device"], generator_device=cells_line["generator_device"],
+                    page=page, box=cells_line["box"],
+                ))
+        # A title at the foot of the page names the table on the next one.
+        if page_sections and (not found_tables or page_sections[-1].y > found_tables[-1][0]):
+            last = titles[id(page_sections[-1])]
+            if last != section:
+                section, meter = last, None
     _fix_rates(result.rows)
     return result if result.rows else None
+
+
+def _section_name(text: str) -> str:
+    """A fee table's title, with a garbled 轉供 put right (棒供輸電費清單)."""
+    name = tables.normal(text)
+    return re.sub(r"^.?供", "轉供", name) if not name.startswith("轉供") and "供" in name[:2] else name
+
+
+def _is_rate(text: str) -> bool:
+    """0.0778, or what OCR makes of it (0.07T8, 0.077, 4.0778): never a thousands figure."""
+    flat = re.sub(r"[\s,，]", "", text)
+    if flat.startswith(("0.", ".")):
+        return True
+    value = tables.number(flat)
+    return bool(_RATE.match(flat)) and value is not None and value < 10
+
+
+def _signature_rows(lines: list[Line]) -> list[dict[str, Any]]:
+    """Rows told by their cells: [no] user meter, device, generator, device, kWh, rate, fee.
+
+    A meter written only on its first generator's row leaves it out of the
+    rows below (the caller carries it down). A cell OCR missed is left empty.
+    """
+    if not lines:
+        return []
+    height = sorted(line.height for line in lines)[len(lines) // 2]
+    # A photo is often taken at a slant: a row's cells drift up or down
+    # across the page. The drift is measured between meters on one row.
+    meters_seen = [line for line in lines if _METER.match(re.sub(r"[\s,，]", "", line.text))]
+    slopes = sorted(
+        (b.middle - a.middle) / (b.x - a.x)
+        for a in meters_seen for b in meters_seen
+        if 80 < b.x - a.x < 600 and abs(b.middle - a.middle) < height * 2
+    )
+    slope = slopes[len(slopes) // 2] if slopes else 0.0
+    level = lambda line: line.middle - slope * (line.x + line.width / 2)
+    groups: list[list[Line]] = []
+    for line in sorted(lines, key=level):
+        if groups and abs(level(line) - sum(level(l) for l in groups[-1]) / len(groups[-1])) < height * 0.7:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    found = []
+    for group in groups:
+        cells = sorted(group, key=lambda line: line.x)
+        flat = [re.sub(r"[\s,，]", "", tables.normal(line.text)).upper() for line in cells]
+        meters = [index for index, text in enumerate(flat) if _METER.match(text)]
+        devices = [index for index, text in enumerate(flat) if _DEVICE.match(text)]
+        if not meters:
+            continue
+        last_code = max(meters + devices)
+        rate_at = next((index for index in range(last_code + 1, len(cells)) if _is_rate(cells[index].text)), None)
+        amounts = [index for index in range(last_code + 1, len(cells))
+                   if index != rate_at and not _is_rate(cells[index].text) and isinstance(tables.number(cells[index].text, integer=True), int)]
+        if not amounts:
+            continue
+        # The user meter comes before the first device; the generator after it.
+        first_device = devices[0] if devices else None
+        user = next((index for index in meters if first_device is None or index < first_device), None)
+        generator = next((index for index in meters if index != user and (first_device is None or index > first_device)), None)
+        if user is not None and generator is None and len(meters) == 1 and first_device is None:
+            user, generator = None, user
+        user_device = next((index for index in devices if user is not None and index > user and (generator is None or index < generator)), None)
+        generator_device = next((index for index in devices if generator is not None and index > generator), None)
+        if rate_at is not None:
+            kwh = [index for index in amounts if index < rate_at]
+            fee = [index for index in amounts if index > rate_at]
+            kwh_at, fee_at = (kwh[-1] if kwh else None), (fee[0] if fee else None)
+        else:
+            kwh_at, fee_at = amounts[0], (amounts[-1] if len(amounts) > 1 else None)
+        found.append({
+            "y": min(line.y for line in cells),
+            "user_meter": flat[user] if user is not None else None,
+            "generator": flat[generator] if generator is not None else None,
+            "user_device": flat[user_device] if user_device is not None else None,
+            "generator_device": flat[generator_device] if generator_device is not None else None,
+            "kwh": tables.number(cells[kwh_at].text, integer=True) if kwh_at is not None else None,
+            "kwh_x": cells[kwh_at].x + cells[kwh_at].width / 2 if kwh_at is not None else None,
+            "rate": tables.number(re.sub(r"[^\d.]", "", cells[rate_at].text)) if rate_at is not None else None,
+            "fee": tables.number(cells[fee_at].text, integer=True) if fee_at is not None else None,
+            "box": tables.union([line.box for line in cells]),
+        })
+    # A row whose user meter OCR missed shows only the generator and its device.
+    generators = {row["generator"] for row in found if row["generator"]}
+    for row in found:
+        if row["generator"] is None and row["user_meter"] in generators:
+            row["generator"], row["generator_device"] = row["user_meter"], row["user_device"]
+            row["user_meter"], row["user_device"] = None, None
+    # One amount without a rate beside it: kWh or fee, by which column it lines up with.
+    kwh_xs = sorted(row["kwh_x"] for row in found if row["kwh"] is not None and row["fee"] is not None)
+    fee_xs = sorted(row["box"][0] + row["box"][2] for row in found if row["kwh"] is not None and row["fee"] is not None)
+    if kwh_xs and fee_xs:
+        kwh_x, fee_x = kwh_xs[len(kwh_xs) // 2], fee_xs[len(fee_xs) // 2]
+        for row in found:
+            if row["fee"] is None and row["kwh"] is not None and row["rate"] is None and abs(row["kwh_x"] - fee_x) < abs(row["kwh_x"] - kwh_x):
+                row["kwh"], row["fee"] = None, row["kwh"]
+    return [row for row in found if row["kwh"] is not None or row["fee"] is not None]
 
 
 def _fix_rates(rows: list[TransferRow]) -> None:
@@ -147,7 +290,8 @@ def _fix_rates(rows: list[TransferRow]) -> None:
                 continue
             expected = (Decimal(str(row.kwh)) * Decimal(str(rate))).quantize(Decimal(1), rounding=ROUND_HALF_UP)
             if expected == Decimal(str(row.fee)):
-                row.note = f"rate read as {row.rate}; the section's {rate} gives the printed fee"
+                fixed = (f"rate read as {row.rate}" if row.rate is not None else "rate not read") + f"; the section's {rate} gives the printed fee"
+                row.note = f"{row.note}; {fixed}" if row.note else fixed
                 row.rate = rate
 
 

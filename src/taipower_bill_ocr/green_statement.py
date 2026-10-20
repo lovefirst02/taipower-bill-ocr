@@ -85,34 +85,48 @@ _WHOLE = ("kwh", "cost")
 
 
 def read_statement(lines: Iterable[Line]) -> Statement | None:
-    """The statement's table, or None when the page has no such table.
+    """The statement's table, or None when there is no such table.
 
-    A table needs a header with the transferred kWh, the charge and the meter.
+    A table needs a header with the transferred kWh, the charge and the
+    meter. The lines may span pages: the table goes on over them, with the
+    first page's columns where a page repeats no header.
     """
     lines = [line for line in lines if line.text.strip()]
-    for anchor in (line for line in lines if _column_of(line.text) == "kwh"):
-        headers = tables.header(lines, anchor, COLUMNS)
-        if not {"kwh", "cost", "meter"} <= headers.keys():
+    statement: Statement | None = None
+    centres: dict[str, float] | None = None
+    height = 0.0
+    for page in sorted({line.page for line in lines}, key=lambda number: number or 0):
+        on_page = [line for line in lines if line.page == page]
+        table = None
+        for anchor in (line for line in on_page if _column_of(line.text) == "kwh"):
+            headers = tables.header(on_page, anchor, COLUMNS)
+            if {"kwh", "cost", "meter"} <= headers.keys():
+                table = (anchor, headers)
+                break
+        if table is not None:
+            anchor, headers = table
+            centres = {name: sum(l.x + l.width / 2 for l in found) / len(found) for name, found in headers.items()}
+            top, height = max(line.y + line.height for found in headers.values() for line in found), anchor.height
+            if statement is None:
+                statement = Statement(headers={
+                    name: (anchor.page, tables.union([line.box for line in found])) for name, found in headers.items()
+                })
+        elif statement is None or centres is None:
             continue
-        centres = {name: sum(l.x + l.width / 2 for l in found) / len(found) for name, found in headers.items()}
-        header_bottom = max(line.y + line.height for found in headers.values() for line in found)
-        statement = Statement(headers={
-            name: (anchor.page, tables.union([line.box for line in found])) for name, found in headers.items()
-        })
-        for cells in tables.rows(lines, anchor.page, header_bottom, float("inf"), centres, anchor.height):
+        else:
+            top = float("-inf")  # carried on from the page before
+        for cells in tables.rows(on_page, page, top, float("inf"), centres, height):
             meter = re.sub(r"\D", "", tables.text_of(cells, "meter"))
             values = {name: _number(tables.text_of(cells, name), name in _WHOLE) for name in NUMERIC if name in cells}
             if len(meter) < 6 or values.get("kwh") is None or values.get("cost") is None:
                 continue
             statement.lines.append(StatementLine(
-                meter=meter, energy=tables.text_of(cells, "energy").strip() or None, page=anchor.page,
+                meter=meter, energy=tables.text_of(cells, "energy").strip() or None, page=page,
                 box=tables.union([line.box for found in cells.values() for line in found]),
                 cells={name: tables.union([cell.box for cell in found]) for name, found in cells.items()},
                 **values,
             ))
-        if statement.lines:
-            return statement
-    return None
+    return statement if statement is not None and statement.lines else None
 
 
 def statement_period(lines: Iterable[Line]) -> str | None:

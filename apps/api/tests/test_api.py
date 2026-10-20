@@ -1030,6 +1030,73 @@ class ApiTests(unittest.TestCase):
         service = dict(zip(header, next(book["GreenServices"].iter_rows(min_row=2, values_only=True))))
         self.assertEqual((service["差異（B−台電清單）"], service["差異（E−台電清單）"]), (0, 0))
 
+    def test_a_pdf_of_bills_and_taipowers_lists_is_split_into_documents(self):
+        """Taipower's lists carry Taipower's name and a month: they must not be taken for bills."""
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210", "06156256254"]}])
+
+        def looks_like_a_bill(page):
+            page["user_info"] = {"billing_period": {"start": "115/07/01", "end": "115/07/31"}}
+            return page
+
+        def carried_on():
+            # The 配電 table runs onto the next page, without a title or header.
+            page = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+            page.ocr_lines = ocr_table(120, [("3", "06156256254", "GE21903170", "08376003416", "TI20850896", "240,000", "0.1788", "42,912")])
+            return page
+
+        def another_service():
+            page = transfer_list()
+            page.ocr_lines = [OcrLine("服務編號：1-11311-08-00502", 67, 295, 700, 59, None) if "服務編號" in line.text else line
+                              for line in page.ocr_lines]
+            return page
+
+        pages = {1: official_sample_bill, 2: lambda: looks_like_a_bill(transfer_list()), 3: carried_on, 4: another_service}
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, number: pages[number]()):
+            self.client.post("/api/uploads", data={"user": "Amy"}, files=[("files", ("bundle.pdf", three_page_pdf(4), "application/pdf"))])
+            self.app.state.worker.wait_idle(30)
+        items = sorted(self.client.get("/api/items", params={"user": "Amy"}).json(), key=lambda item: item["page"])
+        self.assertEqual([(item["page"], item["kind"], item.get("green_type")) for item in items],
+                         [(1, "taipower", None), (2, "green", "transfer_list"), (4, "green", "transfer_list")])
+        listed = self.client.get(f"/api/items/{items[1]['id']}").json()
+        self.assertEqual([page["page"] for page in listed["pages"]], [2, 3])
+        rows = listed["green"]["rows"]
+        self.assertEqual((rows[-1]["section"], rows[-1]["user_meter"], rows[-1]["page"], rows[-1]["check"]["status"]),
+                         ("轉供配電費清單", "06156256254", 3, "ok"))
+        self.assertEqual(listed["green"]["period"], "2026/08/01~2026/08/31")
+        self.assertTrue(any(mark.get("page") == 3 for mark in listed["marks"]))  # the rows on page 3 are marked too
+        other = self.client.get(f"/api/items/{items[2]['id']}").json()
+        self.assertEqual((other["green"]["service"], len(other["green"]["rows"])), ("1-11311-08-00502", 5))
+
+    def test_a_retailers_statement_over_several_pages_is_read_whole(self):
+        xs = (125, 455, 640, 838, 1052, 1288, 1505, 1722)
+
+        def page_two():
+            # The header is repeated, as on the retailer's PDF.
+            page = green_statement()
+            page.ocr_lines = [line for line in page.ocr_lines if line.y < 300] + [
+                OcrLine(text, x, 320, len(text) * 18, 34, None)
+                for text, x in zip(("10505503331", "風能", "5.8000", "0.30520", "0.00000", "6.1067", "450", "2,748"), xs)]
+            return page
+
+        def page_three():
+            # No header: the table carries on.
+            page = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+            page.ocr_lines = [OcrLine(text, x, 120, len(text) * 18, 34, None)
+                              for text, x in zip(("10505503342", "風能", "5.8000", "0.30520", "0.00000", "6.1057", "946", "5,776"), xs)]
+            return page
+
+        pages = {1: green_statement, 2: page_two, 3: page_three}
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, number: pages[number]()):
+            self.client.post("/api/uploads", data={"user": "Amy"}, files=[("files", ("wind.pdf", three_page_pdf(3), "application/pdf"))])
+            self.app.state.worker.wait_idle(30)
+        items = self.client.get("/api/items", params={"user": "Amy"}).json()
+        self.assertEqual([(item["page"], item["green_type"]) for item in items], [(1, "statement")])
+        detail = self.client.get(f"/api/items/{items[0]['id']}").json()
+        lines = detail["green"]["lines"]
+        self.assertEqual([(line["meter"], line["kwh"], line["page"]) for line in lines[-2:]], [("10505503331", 450, 2), ("10505503342", 946, 3)])
+        self.assertEqual(len(lines), 6)
+        self.assertEqual({mark.get("page") for mark in detail["marks"]}, {None, 2, 3})
+
     def test_dashboard_shows_grey_and_green_power_by_energy(self):
         self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
         self.upload_as("list.png", transfer_list())

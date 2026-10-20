@@ -26,6 +26,7 @@ from taipower_bill_ocr.batch import (
     render_page,
 )
 from taipower_bill_ocr.dataset import page_record
+from taipower_bill_ocr.keyword_extract import lines_from_dataset
 
 from . import documents, green
 from .evidence import USAGE_LABEL, current_usage_kwh, default_marks, is_usage_mark, usage_marks
@@ -194,6 +195,7 @@ class OcrWorker:
         if self._cancel.is_set():
             self.store.set_upload(upload_id, status="paused")
             return
+        self._add_green_items(upload_id)
         if not self.store.bill_count(upload_id):
             self._add_document_item(upload_id)
         self._add_usage_marks(upload_id)
@@ -220,6 +222,28 @@ class OcrWorker:
         # A retailer's green power statement, else any other document.
         found = green.detect(self.store, first, self.settings) or documents.detect(self.store, first, self.settings)
         self.store.update_page(first["id"], **found)
+
+    def _add_green_items(self, upload_id: int) -> None:
+        """Each green power document in the upload (e.g. a PDF of Taipower's lists) is reviewed on its own."""
+        pages = sorted(
+            (page for page in self.store.pages() if page["upload_id"] == upload_id and not page["is_bill"]),
+            key=lambda page: page["page_number"] or 0,
+        )
+        firsts = [group[0] for group in green.group_pages(pages)]
+        # Every document's first page starts an item before any is read, so
+        # one document does not take in the next one's pages.
+        for first in firsts:
+            if first.get("kind") != green.GREEN:
+                self.store.update_page(first["id"], is_bill=True, kind=green.GREEN)
+        for first in firsts:
+            page = self.store.page(first["id"])
+            if page.get("green"):
+                continue  # read before a pause or restart
+            found = green.detect(self.store, page, self.settings)
+            if found is None:
+                self.store.update_page(first["id"], is_bill=False, kind=None)
+            else:
+                self.store.update_page(first["id"], **found)
 
     def _add_usage_marks(self, upload_id: int) -> None:
         """Once every page is read, mark 本期 usage, which is often on the back page."""
@@ -250,10 +274,12 @@ class OcrWorker:
         # with at least a period or an amount, on a page that is one. Other
         # pages are kept for the record; an upload with none becomes another
         # kind of document (documents.detect).
+        # Taipower's transfer fee list has Taipower's name on it too: green
+        # power documents are read once the whole upload is in.
         is_bill = event.record is not None and documents.is_taipower_bill(event.bill) and any(
             event.record.row.get(column) is not None
             for column in ("Billing Period 計費期間", "基本電費", "流動電費", "稅前應繳總金額", "應繳總金額")
-        )
+        ) and green.page_type(lines_from_dataset(dataset, event.page_number)) is None
         values: dict[str, Any] = {
             "page_number": event.page_number,
             "is_bill": is_bill,
