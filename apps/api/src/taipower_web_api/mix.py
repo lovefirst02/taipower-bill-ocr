@@ -308,17 +308,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
 def _fingerprint(page: Mapping[str, Any]) -> Any:
     """What makes two items the same document: its type, period and contents."""
     if page.get("kind") == green.GREEN:
-        statement = page.get("green") or {}
-        kind = green.type_of(statement)
-        if kind == green.STATEMENT:
-            body = tuple(sorted((str(line.get("meter")), str(line.get("kwh")), str(line.get("cost"))) for line in statement.get("lines") or []))
-        elif kind == green.TRANSFER_LIST:
-            body = tuple(sorted((str(row.get("section")), str(row.get("user_meter")), str(row.get("generator")), str(row.get("kwh")), str(row.get("fee")))
-                                for row in statement.get("rows") or []))
-        else:
-            values = statement.get("values") or {}
-            body = (str(values.get("kwh")), str(values.get("untaxed")))
-        return (kind, statement.get("period"), statement.get("service"), body)
+        return green.fingerprint(page.get("green") or {})
     row = page.get("row") or {}
     return ("bill", meter_number(row.get("Custom No. 電號")) or page.get("upload_id"), row.get("Billing Period 計費期間"),
             row.get("稅前應繳總金額"), row.get("應繳總金額"), _total(row, _BILLED_KWH), row.get(documents.USAGE))

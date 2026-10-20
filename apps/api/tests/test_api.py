@@ -1175,6 +1175,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(cost(once), 3809716)
         left_out = [doc for doc in twice["documents"] if doc["duplicate_of"]]
         self.assertEqual(sorted(doc["filename"] for doc in left_out), ["list again.png", "notice again.png"])
+        # Each document's comparisons count the list once too.
+        notice = next(item for item in self.client.get("/api/items", params={"user": "Amy"}).json() if item["filename"] == "notice.png")
+        services = self.client.get(f"/api/items/{notice['id']}").json()["green"]["comparisons"]["services"]
+        self.assertEqual((services[0]["taipower_list_kwh"], services[0]["kwh_difference"]), (93219 + 556983, 0))
         notice = next(doc for doc in once["documents"] if doc["type"] == "notice")
         self.assertEqual((notice["kwh"], notice["cost"], notice["counted_kwh"], notice["counted_cost"]), (650202, 3809716, 650202, 3809716))
 

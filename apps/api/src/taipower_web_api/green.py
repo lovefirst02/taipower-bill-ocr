@@ -333,8 +333,32 @@ def transferred_kwh(row: Mapping[str, Any]) -> Any:
     return sum(values) if values else None
 
 
+def fingerprint(statement: Mapping[str, Any]) -> Any:
+    """What makes two green power documents the same: type, period, service and contents."""
+    kind = type_of(statement)
+    if kind == STATEMENT:
+        body = tuple(sorted((str(line.get("meter")), str(line.get("kwh")), str(line.get("cost"))) for line in statement.get("lines") or []))
+    elif kind == TRANSFER_LIST:
+        body = tuple(sorted((str(row.get("section")), str(row.get("user_meter")), str(row.get("generator")), str(row.get("kwh")), str(row.get("fee")))
+                            for row in statement.get("rows") or []))
+    else:
+        values = statement.get("values") or {}
+        body = (str(values.get("kwh")), str(values.get("untaxed")))
+    return (kind, statement.get("period"), statement.get("service"), body)
+
+
 def _documents(store: Store) -> list[dict[str, Any]]:
-    return [page for page in store.pages(bills_only=True) if page.get("kind") == GREEN and not page.get("hidden")]
+    """Every green power document, the same one uploaded twice (or by two people) once."""
+    seen: set[Any] = set()
+    found = []
+    for page in sorted(store.pages(bills_only=True), key=lambda item: item["id"]):
+        if page.get("kind") != GREEN or page.get("hidden"):
+            continue
+        key = fingerprint(page.get("green") or {})
+        if key not in seen:
+            seen.add(key)
+            found.append(page)
+    return found
 
 
 def _bill_kwh(store: Store, meter: str, period: str | None) -> tuple[Any, str, list[dict[str, Any]]]:
@@ -343,15 +367,17 @@ def _bill_kwh(store: Store, meter: str, period: str | None) -> tuple[Any, str, l
     if wanted is None:
         return None, "no period", []
     total, exact, used = Decimal(0), True, []
-    for bill in store.pages(bills_only=True):
+    seen: set[tuple[Any, Any]] = set()
+    for bill in sorted(store.pages(bills_only=True), key=lambda item: item["id"]):
         if (bill.get("kind") or "taipower") != "taipower" or bill.get("hidden"):
             continue
         row = bill.get("row") or {}
         if meter_number(row.get("Custom No. 電號")) != meter:
             continue
         bill_period, kwh = parse_period(row.get("Billing Period 計費期間")), transferred_kwh(row)
-        if bill_period is None or kwh is None:
-            continue
+        if bill_period is None or kwh is None or (bill_period, kwh) in seen:
+            continue  # the same bill uploaded twice counts once
+        seen.add((bill_period, kwh))
         start, end = max(bill_period[0], wanted[0]), min(bill_period[1], wanted[1])
         if start > end:
             continue
