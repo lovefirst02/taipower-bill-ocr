@@ -56,9 +56,10 @@ export const api = {
   browseFolder: () => request<{ folder: string | null }>("/api/settings/browse", { method: "POST" }),
   output: (user: string) => request<OutputInfo>(`/api/output?user=${encodeURIComponent(user)}`),
 
-  upload: (user: string, files: File[]) => {
+  upload: (user: string, files: File[], siteId: number | null = null) => {
     const form = new FormData();
     form.append("user", user);
+    if (siteId !== null) form.append("site_id", String(siteId));
     files.forEach((file) => form.append("files", file, file.name));
     return request<{ accepted: { id: number; filename: string }[]; rejected: { filename: string; reason: string }[] }>(
       "/api/uploads",

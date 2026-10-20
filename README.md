@@ -601,6 +601,13 @@ npm test           # 前端與後端測試
   `GreenPower`（售電明細每列依月份拆分）、`TransferList`（台電清單每列，含是否為本公司電號）、
   `GreenCheck`（各電號三方核對）、`GreenServices`（通知單 vs 台電清單）。綠電單據不會列入 `Bills` 與 `Monthly`。
 
+### 依 Site 上傳與分類
+
+- 上傳區上方可選「Site」：接下來上傳的檔案每一頁都歸到該 Site（預設「by 電號」，每張帳單依自己的電號找 Site）。
+- 左側清單依 **Site → 月份** 分組（月份取帳單期間中天數最多的月份，最新的在上）；讀不到期間的單據直接放在 Site 底下。
+  綠電單據依其電號判斷：都屬同一個 Site 就放在該 Site，跨多個 Site 放在「Several sites」，都不屬於任何 Site 放在「No site」。
+- 一個 Site 可以有多個電號（Settings → Sites，一行一個電號）。
+
 ### 預算 vs 實際
 
 - **預算（Excel 匯入）**：Dashboard 的「Budget vs actual」按「Budget template 2026」下載範本，每月 × Site（含 Entity）一列，

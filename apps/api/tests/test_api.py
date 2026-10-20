@@ -1310,6 +1310,28 @@ class ApiTests(unittest.TestCase):
         self.assertIn("不存在", response.json()["detail"]["errors"][0])
         self.assertEqual(len(self.client.get("/api/budget").json()["rows"]), 1)
 
+    def test_an_upload_can_be_put_in_a_site(self):
+        sites = self.save_sites([{"name": "TNF", "meters": []}, {"name": "台北辦公室", "meters": []}]).json()
+        tnf = next(site["id"] for site in sites if site["name"] == "TNF")
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, number: landlord_statement()):
+            self.client.post("/api/uploads", data={"user": "Amy", "site_id": str(tnf)}, files=[("files", ("a.png", png_bytes(), "image/png"))])
+            self.app.state.worker.wait_idle(10)
+        item = self.first_item("Amy")
+        self.assertEqual(item["site"], "TNF")
+        self.assertEqual(self.client.get(f"/api/items/{item['id']}").json()["site"]["how"], "manual")
+        response = self.client.post("/api/uploads", data={"user": "Amy", "site_id": "999"}, files=[("files", ("b.png", png_bytes(), "image/png"))])
+        self.assertEqual(response.status_code, 400)
+
+    def test_a_green_document_is_placed_in_the_site_of_its_meters(self):
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}, {"name": "台中廠", "meters": ["06156256254"]}])
+        self.upload_as("list.png", transfer_list())  # meters of both sites
+        self.upload_as("wind.png", green_statement())  # meters in no site
+        items = {item["filename"]: item for item in self.client.get("/api/items", params={"user": "Amy"}).json()}
+        self.assertEqual((items["list.png"]["site"], items["wind.png"]["site"]), ("Several sites", None))
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
+        items = {item["filename"]: item for item in self.client.get("/api/items", params={"user": "Amy"}).json()}
+        self.assertEqual(items["list.png"]["site"], "彰化廠")
+
     def test_green_services_setting_needs_an_energy(self):
         response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})
         self.assertEqual(response.status_code, 400)

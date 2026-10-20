@@ -157,6 +157,9 @@ class Store:
                 self._db.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
         if "entity_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(sites)")}:
             self._db.execute("ALTER TABLE sites ADD COLUMN entity_id INTEGER")
+        # The site chosen when uploading: every page of the upload is placed in it.
+        if "site_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(uploads)")}:
+            self._db.execute("ALTER TABLE uploads ADD COLUMN site_id INTEGER")
         self._db.commit()
         self._lock = threading.Lock()
 
@@ -171,10 +174,10 @@ class Store:
             return self._db.execute(sql, params).fetchall()
 
     # ---------------------------------------------------------------- uploads
-    def add_upload(self, user: str, filename: str, path: Path, sha256: str) -> int:
+    def add_upload(self, user: str, filename: str, path: Path, sha256: str, site_id: int | None = None) -> int:
         cursor = self._execute(
-            "INSERT INTO uploads (user, filename, path, sha256, status, created_at) VALUES (?, ?, ?, ?, 'queued', ?)",
-            (user, filename, str(path), sha256, now()),
+            "INSERT INTO uploads (user, filename, path, sha256, status, created_at, site_id) VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+            (user, filename, str(path), sha256, now(), site_id),
         )
         return int(cursor.lastrowid)
 
@@ -257,6 +260,22 @@ class Store:
             )
             if rows:
                 return {**dict(rows[0]), "how": "meter"}
+        # A green power document lists meters: its site when they are all in one.
+        statement = page.get("green") or {}
+        numbers = {meter_number(line.get("meter")) for line in statement.get("lines") or []}
+        numbers |= {meter_number(row.get("user_meter")) for row in statement.get("rows") or []}
+        numbers.discard(None)
+        if numbers:
+            marks = ", ".join("?" for _ in numbers)
+            rows = self._query(
+                f"SELECT DISTINCT sites.* FROM meters JOIN sites ON sites.id = meters.site_id WHERE meters.customer_number IN ({marks})",
+                tuple(numbers),
+            )
+            if len(rows) == 1:
+                return {**dict(rows[0]), "how": "meter"}
+            if len(rows) > 1:
+                return {"id": None, "name": None, "code": None, "entity_id": None, "how": "several",
+                        "names": sorted(row["name"] for row in rows)}
         return None
 
     # --------------------------------------------------------------- entities
@@ -371,6 +390,10 @@ class Store:
 
     # ------------------------------------------------------------------ pages
     def add_page(self, upload_id: int, **values: Any) -> int:
+        if "site_id" not in values:
+            rows = self._query("SELECT site_id FROM uploads WHERE id = ?", (upload_id,))
+            if rows and rows[0]["site_id"]:
+                values["site_id"] = rows[0]["site_id"]
         record = _encode({**values, "upload_id": upload_id, "updated_at": now()})
         columns = ", ".join(record)
         placeholders = ", ".join(f":{key}" for key in record)

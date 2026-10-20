@@ -145,11 +145,11 @@ export default function App() {
     }
   };
 
-  const upload = async (files: File[]) => {
+  const upload = async (files: File[], siteId: number | null) => {
     setUploading(true);
     setNotice(null);
     try {
-      const result = await api.upload(user, files);
+      const result = await api.upload(user, files, siteId);
       if (result.rejected.length) {
         setNotice(`Skipped: ${result.rejected.map((file) => `${file.filename} (${file.reason})`).join(", ")}`);
       }
@@ -205,7 +205,7 @@ export default function App() {
       </header>
       <div className="layout">
         <nav className="sidebar">
-          <Dropzone onFiles={upload} busy={uploading} />
+          <Dropzone onFiles={upload} busy={uploading} sitesVersion={settingsVersion} />
           {notice && <p className="notice">{notice}</p>}
           <UploadQueue
             uploads={uploads}

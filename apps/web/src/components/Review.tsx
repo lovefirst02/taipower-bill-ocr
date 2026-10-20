@@ -344,7 +344,10 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
                 setDirty(true);
               }}
             >
-              <option value="">{item.site?.how === "meter" ? `${item.site.name} (by 電號)` : "— by 電號 (none found) —"}</option>
+              <option value="">
+                {item.site?.how === "meter" ? `${item.site.name} (by 電號)`
+                  : item.site?.how === "several" ? `several sites: ${(item.site.names ?? []).join(", ")}` : "— by 電號 (none found) —"}
+              </option>
               {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
             </select>
           </label>

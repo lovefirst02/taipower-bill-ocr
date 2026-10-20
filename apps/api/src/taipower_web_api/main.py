@@ -157,6 +157,13 @@ def _clean_user(user: str) -> str:
     return user
 
 
+def _site_name(site: dict[str, Any] | None) -> str | None:
+    """A document's site for the list; one over several sites says so."""
+    if site is None:
+        return None
+    return "Several sites" if site.get("how") == "several" else site.get("name")
+
+
 def _attachment(name: str) -> dict[str, str]:
     """A download header for any file name.
 
@@ -263,8 +270,10 @@ def create_app(
 
     # ---------------------------------------------------------------- upload
     @app.post("/api/uploads")
-    async def upload(user: str = Form(...), files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    async def upload(user: str = Form(...), files: list[UploadFile] = File(...), site_id: int | None = Form(None)) -> dict[str, Any]:
         user = _clean_user(user)
+        if site_id is not None and not any(site["id"] == site_id for site in store.sites()):
+            raise HTTPException(400, "unknown site")
         accepted, rejected = [], []
         settings.uploads_dir.mkdir(parents=True, exist_ok=True)
         for file in files:
@@ -278,7 +287,7 @@ def create_app(
                 continue
             target = settings.uploads_dir / f"{uuid.uuid4().hex[:12]}_{name}"
             target.write_bytes(content)
-            upload_id = store.add_upload(user, name, target, hashlib.sha256(content).hexdigest())
+            upload_id = store.add_upload(user, name, target, hashlib.sha256(content).hexdigest(), site_id)
             worker.submit(upload_id)
             accepted.append({"id": upload_id, "filename": name})
         return {"accepted": accepted, "rejected": rejected}
@@ -544,7 +553,7 @@ def create_app(
                 "total": row.get("應繳總金額") if page.get("kind") != green.GREEN else green.total_cost(page),
                 "green_type": green.type_of(page.get("green")) if page.get("kind") == green.GREEN else None,
                 "kind": page.get("kind") or documents.TAIPOWER,
-                "site": (store.site_of(page) or {}).get("name"),
+                "site": _site_name(store.site_of(page)),
                 "submitted_at": page["submitted_at"],
             })
         return result

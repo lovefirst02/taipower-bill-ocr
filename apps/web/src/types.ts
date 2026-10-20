@@ -100,7 +100,9 @@ export interface ItemEntity extends Entity {
 
 /** A bill's site: chosen by hand, or the one its 電號 belongs to. */
 export interface ItemSite extends Site {
-  how: "manual" | "meter";
+  /** "several": a green power document whose meters are in more than one site (``names``). */
+  how: "manual" | "meter" | "several";
+  names?: string[];
 }
 
 /** A bill's share of one calendar month (split by days). */
