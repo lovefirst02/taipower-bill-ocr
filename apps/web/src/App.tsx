@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Dashboard } from "./components/Dashboard";
 import { Review } from "./components/Review";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { BillList, Dropzone, UploadQueue } from "./components/Sidebar";
@@ -47,6 +48,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [output, setOutput] = useState<OutputInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [colors, setColors] = useState<MarkColors | null>(null);
   const loadColors = useCallback(() => {
@@ -192,6 +194,10 @@ export default function App() {
           >
             Download all PDFs
           </a>
+          <button className={showDashboard ? "active" : ""} onClick={() => setShowDashboard(!showDashboard)}
+            title="Grey and green power (solar, wind) per month and site">
+            Dashboard
+          </button>
           <a className="button" href={api.exportUrl(user)}>Export my Excel</a>
           <button onClick={() => setShowSettings(true)}>Settings</button>
           <button className="user" onClick={() => setEditingUser(true)} title="Change name">{user}</button>
@@ -209,10 +215,12 @@ export default function App() {
             onRemove={removeUpload}
             onRemoveAll={removeAllUploads}
           />
-          <BillList items={items} selectedId={selected} onSelect={setSelected} onDelete={deleteItems} />
+          <BillList items={items} selectedId={selected} onSelect={(id) => { setShowDashboard(false); setSelected(id); }} onDelete={deleteItems} />
         </nav>
         <main>
-          {selected !== null && columns.length ? (
+          {showDashboard ? (
+            <Dashboard key={settingsVersion} onOpenSettings={() => setShowSettings(true)} />
+          ) : selected !== null && columns.length ? (
             <Review
               key={selected}
               itemId={selected}

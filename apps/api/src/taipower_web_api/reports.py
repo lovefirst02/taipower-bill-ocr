@@ -23,7 +23,7 @@ from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_m
 
 from taipower_bill_ocr.periods import split_by_month
 
-from . import documents, green
+from . import documents, green, mix
 from .store import Store, meter_number
 
 UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出者", "送出時間", "狀態", "證據檔"
@@ -215,7 +215,8 @@ def green_common(output_dir: Path | None):
     return common
 
 
-def report_tables(pages: list[Mapping[str, Any]], store: Store, output_dir: Path | None, tolerance: float) -> dict[str, tuple[list[str], list[list[Any]]]]:
+def report_tables(pages: list[Mapping[str, Any]], store: Store, output_dir: Path | None, tolerance: float,
+                  services: Mapping[str, str] | None = None) -> dict[str, tuple[list[str], list[list[Any]]]]:
     """The report workbook's sheets: bills, their months, and green power statements."""
     bills = [page for page in pages if not _is_green(page)]
     statements = [page for page in pages if _is_green(page)]
@@ -231,10 +232,13 @@ def report_tables(pages: list[Mapping[str, Any]], store: Store, output_dir: Path
         "TransferList": (green.LIST_COLUMNS, green.list_rows(statements, store)),
         "GreenCheck": (green.CHECK_COLUMNS, checks[0]),
         "GreenServices": (green.SERVICE_COLUMNS, checks[1]),
+        # Grey and green (by energy) kWh and costs per month and meter.
+        "EnergyMix": (mix.MIX_COLUMNS, mix.mix_rows(pages, store, services or {})),
     }
 
 
-def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = None, tolerance: float = 3) -> bytes:
+def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = None, tolerance: float = 3,
+                    services: Mapping[str, str] | None = None) -> bytes:
     """A 17-column workbook of the given bill pages, for download (and their months)."""
     from openpyxl import Workbook
 
@@ -247,8 +251,8 @@ def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = No
         if not _is_green(page):
             sheet.append(report_row(page))
     if store is not None:
-        tables = report_tables(pages, store, None, tolerance)
-        for name in ("Monthly", "GreenPower", "TransferList", "GreenCheck", "GreenServices"):
+        tables = report_tables(pages, store, None, tolerance, services)
+        for name in ("Monthly", "EnergyMix", "GreenPower", "TransferList", "GreenCheck", "GreenServices"):
             columns, rows = tables[name]
             extra = workbook.create_sheet(name)
             extra.append(columns)
@@ -368,7 +372,8 @@ def document_record(page: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
     return record
 
 
-def write_workbooks(store: Store, output_dir: Path, user: str | None = None, tolerance: float = 3) -> list[str]:
+def write_workbooks(store: Store, output_dir: Path, user: str | None = None, tolerance: float = 3,
+                    services: Mapping[str, str] | None = None) -> list[str]:
     """Rebuild both workbooks from submitted bills.
 
     With ``user`` only that user's bills are written, into their own folder
@@ -380,7 +385,7 @@ def write_workbooks(store: Store, output_dir: Path, user: str | None = None, tol
     target_dir = workbook_dir(output_dir, user)
 
     report = target_dir / "taipower_bills_17.xlsx"
-    if not save_tables(report, report_tables(submitted, store, output_dir, tolerance)):
+    if not save_tables(report, report_tables(submitted, store, output_dir, tolerance, services)):
         locked.append(report.name)
 
     sheets = empty_sheets()
@@ -443,6 +448,8 @@ class WorkbookWriter:
         self.store = store
         # Green power statements' allowed difference, for their checks.
         self.tolerance = tolerance
+        # Which energy each transfer service delivers (Settings), for EnergyMix.
+        self.services: dict[str, str] = {}
         self.output_dir = output_dir
         self.retry_seconds = retry_seconds
         self.per_user = per_user
@@ -473,7 +480,7 @@ class WorkbookWriter:
         """Rebuild the workbooks now; returns the ones that were locked."""
         key = user if self.per_user else None
         with self._lock:
-            locked = write_workbooks(self.store, self.output_dir, key, self.tolerance)
+            locked = write_workbooks(self.store, self.output_dir, key, self.tolerance, self.services)
             if locked:
                 self._pending.add(key)
                 log.warning("%s open elsewhere; retrying every %ss", ", ".join(locked), self.retry_seconds)

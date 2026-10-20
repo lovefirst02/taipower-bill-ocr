@@ -1,4 +1,4 @@
-import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource } from "./types";
+import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, EnergyMix } from "./types";
 
 type Sources = Record<string, ValueSource>;
 /** Warnings the reviewer kept (the others were cleared). */
@@ -38,6 +38,7 @@ const json = (body: unknown): RequestInit => ({
 export const api = {
   columns: () => request<Column[]>("/api/columns"),
   settings: () => request<SettingsView>("/api/settings"),
+  dashboard: (submittedOnly: boolean) => request<EnergyMix>(`/api/dashboard?submitted_only=${submittedOnly}`),
   saveSettings: (values: SettingsValues) => request<SettingsSaved>("/api/settings", { method: "PUT", ...json({ values }) }),
   browseFolder: () => request<{ folder: string | null }>("/api/settings/browse", { method: "POST" }),
   output: (user: string) => request<OutputInfo>(`/api/output?user=${encodeURIComponent(user)}`),

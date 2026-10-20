@@ -272,3 +272,34 @@ main { flex: 1; min-width: 0; display: flex; }
   .review-body { flex-direction: column; }
   .side { max-width: none; }
 }
+
+/* Dashboard: grey and green power */
+.dashboard { flex: 1; min-width: 0; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.dash-head h2 { margin: 0 auto 0 0; font-size: 18px; }
+.dash-head label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.dash-warnings { background: var(--flag); border: 1px solid var(--flag-border); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+.dash-warnings p { margin: 4px 0; }
+.dash-warnings .warn-text { color: var(--warn); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.kpi-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.kpi-label i, .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.kpi strong { font-size: 20px; }
+.kpi small { color: var(--muted); }
+.dash-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+.dash-card h3 { margin: 0 0 8px; font-size: 14px; }
+.dash-card summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; flex-wrap: wrap; }
+.legend span { display: flex; align-items: center; gap: 5px; }
+.chart { width: 100%; height: auto; max-height: 320px; }
+.chart .grid { stroke: var(--border); }
+.chart .axis { font-size: 11px; fill: var(--muted); }
+.chart .share { font-size: 11px; fill: var(--ok); font-weight: 600; }
+.dash-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.dash-table th { text-align: right; color: var(--muted); font-weight: 600; padding: 4px 6px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.dash-table th:first-child, .dash-table td:first-child { text-align: left; }
+.dash-table td { padding: 3px 6px; white-space: nowrap; border-bottom: 1px solid var(--bg); }
+.dash-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dash-table tr.total td { font-weight: 600; border-top: 1px solid var(--border); }
+.topbar-actions button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }

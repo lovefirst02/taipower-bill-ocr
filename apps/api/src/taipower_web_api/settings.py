@@ -31,6 +31,17 @@ def _words(value: Any) -> list[str]:
     return words
 
 
+def _lines(value: Any) -> list[str]:
+    """One entry per line (entries may hold spaces and commas)."""
+    items = value if isinstance(value, (list, tuple)) else str(value).splitlines()
+    lines: list[str] = []
+    for item in items:
+        line = " ".join(str(item).split())
+        if line and line not in lines:
+            lines.append(line)
+    return lines
+
+
 # Keywords for documents that are not Taipower bills (see keyword_extract).
 KEYWORD_SETTINGS = tuple(DEFAULT_KEYWORDS)
 
@@ -43,6 +54,7 @@ EDITABLE: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "host": ("TAIPOWER_HOST", lambda value: str(value).strip()),
     "port": ("TAIPOWER_PORT", int),
     "green_tolerance": ("TAIPOWER_GREEN_TOLERANCE", float),
+    "green_services": ("TAIPOWER_GREEN_SERVICES", _lines),
     "highlight_color": ("TAIPOWER_HIGHLIGHT_COLOR", lambda value: str(value).strip().lower()),
     "label_color": ("TAIPOWER_LABEL_COLOR", lambda value: str(value).strip().lower()),
     **{key: (f"TAIPOWER_{key.upper()}", _words) for key in KEYWORD_SETTINGS},
@@ -74,6 +86,8 @@ class Settings:
     # A green power statement line may differ this much (NT$) from kWh × rates:
     # retailers round finer amounts (time-of-use, intervals) one by one.
     green_tolerance: float = 3
+    # Which energy each transfer service (服務編號) delivers: "1-11210-08-00210 太陽能".
+    green_services: list[str] = field(default_factory=list)
     # Evidence marks without a colour of their own: highlighter and red pen.
     highlight_color: str = "#ffeb3b"
     label_color: str = "#d32f2f"
@@ -106,6 +120,8 @@ class Settings:
             raise ValueError("output folder is required")
         if not 0 <= self.green_tolerance <= 100000:
             raise ValueError("green power tolerance must be between 0 and 100000 NT$")
+        if len(self.green_services) > 200 or any(len(line.split()) < 2 or len(line) > 80 for line in self.green_services):
+            raise ValueError("green power services: one per line, a service number then its energy, e.g. 1-11210-08-00210 太陽能")
         for name in ("highlight_color", "label_color"):
             if not COLOR.match(getattr(self, name)):
                 raise ValueError(f"{name.replace('_', ' ')} must look like #ffeb3b")

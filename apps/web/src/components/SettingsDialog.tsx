@@ -11,6 +11,7 @@ const ENV_NAMES: Record<keyof SettingsValues, string> = {
   host: "TAIPOWER_HOST",
   port: "TAIPOWER_PORT",
   green_tolerance: "TAIPOWER_GREEN_TOLERANCE",
+  green_services: "TAIPOWER_GREEN_SERVICES",
   highlight_color: "TAIPOWER_HIGHLIGHT_COLOR",
   label_color: "TAIPOWER_LABEL_COLOR",
   company_names: "TAIPOWER_COMPANY_NAMES",
@@ -260,6 +261,22 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
               <span className="hint">
                 How far a statement line&apos;s charge may be from kWh × (base price + transfer rate + certificate rate) before it is flagged.
                 Retailers round finer amounts one by one, so a few NT$ is normal.
+              </span>
+            )}
+          </label>
+          <label className="setting">
+            <span>Green power services 服務編號 → 能源別</span>
+            <textarea
+              rows={3}
+              value={values.green_services.join("\n")}
+              disabled={disabled("green_services")}
+              placeholder={"1-11210-08-00210 太陽能\n1-11311-08-00502 風力"}
+              onChange={(event) => set("green_services", event.target.value.split("\n"))}
+            />
+            {lockNote("green_services") ?? (
+              <span className="hint">
+                One per line: a transfer service number (on Taipower&apos;s transfer fee list and the purchase notice), then its energy.
+                The dashboard splits green power by energy with it; a retailer&apos;s statement already says which.
               </span>
             )}
           </label>

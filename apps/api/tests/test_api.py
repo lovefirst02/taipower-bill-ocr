@@ -1030,6 +1030,42 @@ class ApiTests(unittest.TestCase):
         service = dict(zip(header, next(book["GreenServices"].iter_rows(min_row=2, values_only=True))))
         self.assertEqual((service["差異（B−台電清單）"], service["差異（E−台電清單）"]), (0, 0))
 
+    def test_dashboard_shows_grey_and_green_power_by_energy(self):
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
+        self.upload_as("list.png", transfer_list())
+        self.upload_as("notice.png", purchase_notice())
+        bill = official_sample_bill()  # 計費度數 8000 + 3000 + 3000 + 1000
+        bill["user_info"]["customer_number"] = "05785204210"
+        bill["user_info"]["billing_period"] = {"start": "115/08/01", "end": "115/08/31"}
+        bill["user_info"]["transferred_energy"] = {"peak_kwh": 556983}
+        self.upload_as("bill.png", bill)
+        mix = self.client.get("/api/dashboard").json()
+        # Nothing says which energy the service delivers yet.
+        self.assertEqual(mix["unclassified_services"], ["1-11210-08-00210"])
+        rows = {row["meter"]: row for row in mix["rows"]}
+        self.assertEqual(rows["05785204210"]["green_kwh"], {"未分類": 556983})
+        self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210 太陽光電"}})
+        mix = self.client.get("/api/dashboard").json()
+        self.assertEqual(mix["unclassified_services"], [])
+        rows = {row["meter"]: row for row in mix["rows"]}
+        ours = rows["05785204210"]
+        self.assertEqual((ours["month"], ours["site"], ours["grey_kwh"], ours["green_kwh"], ours["total_kwh"], ours["green_source"]),
+                         ("2026-08", "彰化廠", 15000, {"太陽能": 556983}, 15000 + 556983, "transfer_list"))
+        self.assertEqual(ours["green_share"], round(556983 / (15000 + 556983), 4))
+        # The notice's untaxed total is shared by kWh and adds up exactly.
+        self.assertEqual(rows["05785193319"]["grey_kwh"], None)  # no bill for that meter
+        self.assertEqual(round(rows["05785193319"]["green_cost"] + ours["green_cost"], 2), 3809716)
+        self.assertEqual(round(ours["green_cost"]), round(3809716 * 556983 / 650202))
+        # The Excel sheet has the same.
+        workbook = load_workbook(io.BytesIO(self.client.get("/api/export.xlsx", params={"user": "Amy"}).content))
+        header = [cell.value for cell in workbook["EnergyMix"][1]]
+        sheet = {row[header.index("電號")]: dict(zip(header, row)) for row in workbook["EnergyMix"].iter_rows(min_row=2, values_only=True)}
+        self.assertEqual((sheet["05785204210"]["灰電度數"], sheet["05785204210"]["太陽能度數"]), (15000, 556983))
+
+    def test_green_services_setting_needs_an_energy(self):
+        response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})
+        self.assertEqual(response.status_code, 400)
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

@@ -252,12 +252,40 @@ export interface SettingsValues {
   highlight_color: string;
   label_color: string;
   green_tolerance: number;
+  /** "1-11210-08-00210 太陽能": which energy each transfer service delivers. */
+  green_services: string[];
   company_names: string[];
   self_terms: string[];
   period_keywords: string[];
   usage_keywords: string[];
   cost_keywords: string[];
   exclude_keywords: string[];
+}
+
+/** Grey and green power of a meter in a month (see the dashboard). */
+export interface MixRow {
+  month: string;
+  /** null for a document without a 電號 (then ``document`` names it). */
+  meter: string | null;
+  document: string | null;
+  site: string | null;
+  site_code: string | null;
+  grey_kwh: number | null;
+  /** Green kWh by energy: 太陽能, 風力, 未分類 ... */
+  green_kwh: Record<string, number>;
+  green_total: number;
+  total_kwh: number | null;
+  green_share: number | null;
+  grey_cost: number | null;
+  green_cost: number | null;
+  green_source: "transfer_list" | "statement" | "bill" | null;
+}
+
+export interface EnergyMix {
+  rows: MixRow[];
+  unclassified_services: string[];
+  notes: string[];
+  sites_set: boolean;
 }
 
 export type KeywordSetting = "company_names" | "self_terms" | "period_keywords" | "usage_keywords" | "cost_keywords" | "exclude_keywords";
