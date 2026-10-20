@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Iterable, Sequence
 
-from .keyword_extract import Line, compact
+from . import tables
+from .keyword_extract import Line
 
 # Each column and the header words naming it, most specific first.
 COLUMNS: dict[str, tuple[str, ...]] = {
@@ -71,33 +72,16 @@ class Statement:
     headers: dict[str, tuple[int | None, tuple[float, float, float, float]]] = field(default_factory=dict)
 
 
-def _number(text: str) -> int | float | None:
-    """A number in a table cell, ignoring a stray character or two (e.g. a cursor read as "I")."""
-    flat = re.sub(r"[,，\s]", "", text)
-    cleaned = re.sub(r"[^\d.\-]", "", flat)
-    digits = sum(char.isdigit() for char in flat)
-    if not flat or digits < len(flat) * 0.6 or not re.fullmatch(r"-?\d+(\.\d+)?", cleaned):
-        return None
-    value = float(cleaned)
-    return int(value) if "." not in cleaned and value.is_integer() else value
+def _number(text: str, integer: bool = False) -> int | float | None:
+    return tables.number(text, integer)
 
 
 def _column_of(text: str) -> str | None:
-    flat = compact(text)
-    best: tuple[int, str] | None = None
-    for name, words in COLUMNS.items():
-        for word in words:
-            if word in flat and (best is None or len(word) > best[0]):
-                best = (len(word), name)
-    return best[1] if best else None
+    return tables.match(text, COLUMNS)
 
 
-def _union(boxes: Sequence[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
-    left = min(box[0] for box in boxes)
-    top = min(box[1] for box in boxes)
-    right = max(box[0] + box[2] for box in boxes)
-    bottom = max(box[1] + box[3] for box in boxes)
-    return (left, top, right - left, bottom - top)
+# Whole numbers: a point in them is a thousands comma OCR misread.
+_WHOLE = ("kwh", "cost")
 
 
 def read_statement(lines: Iterable[Line]) -> Statement | None:
@@ -107,57 +91,28 @@ def read_statement(lines: Iterable[Line]) -> Statement | None:
     """
     lines = [line for line in lines if line.text.strip()]
     for anchor in (line for line in lines if _column_of(line.text) == "kwh"):
-        band = [
-            line for line in lines
-            if line.page == anchor.page and abs(line.middle - anchor.middle) < anchor.height * 1.6
-        ]
-        headers: dict[str, list[Line]] = {}
-        for line in band:
-            name = _column_of(line.text)
-            if name:
-                headers.setdefault(name, []).append(line)
+        headers = tables.header(lines, anchor, COLUMNS)
         if not {"kwh", "cost", "meter"} <= headers.keys():
             continue
         centres = {name: sum(l.x + l.width / 2 for l in found) / len(found) for name, found in headers.items()}
         header_bottom = max(line.y + line.height for found in headers.values() for line in found)
         statement = Statement(headers={
-            name: (anchor.page, _union([line.box for line in found])) for name, found in headers.items()
+            name: (anchor.page, tables.union([line.box for line in found])) for name, found in headers.items()
         })
-        statement.lines = _rows(lines, anchor.page, header_bottom, centres, anchor.height)
+        for cells in tables.rows(lines, anchor.page, header_bottom, float("inf"), centres, anchor.height):
+            meter = re.sub(r"\D", "", tables.text_of(cells, "meter"))
+            values = {name: _number(tables.text_of(cells, name), name in _WHOLE) for name in NUMERIC if name in cells}
+            if len(meter) < 6 or values.get("kwh") is None or values.get("cost") is None:
+                continue
+            statement.lines.append(StatementLine(
+                meter=meter, energy=tables.text_of(cells, "energy").strip() or None, page=anchor.page,
+                box=tables.union([line.box for found in cells.values() for line in found]),
+                cells={name: tables.union([cell.box for cell in found]) for name, found in cells.items()},
+                **values,
+            ))
         if statement.lines:
             return statement
     return None
-
-
-def _rows(lines: list[Line], page: int | None, top: float, centres: dict[str, float], height: float) -> list[StatementLine]:
-    below = sorted((line for line in lines if line.page == page and line.y >= top - height * 0.2), key=lambda line: line.middle)
-    # Group into rows by height.
-    groups: list[list[Line]] = []
-    for line in below:
-        if groups and abs(line.middle - sum(l.middle for l in groups[-1]) / len(groups[-1])) < max(line.height, height) * 0.7:
-            groups[-1].append(line)
-        else:
-            groups.append([line])
-    order = sorted(centres, key=centres.get)
-    result = []
-    for group in groups:
-        cells: dict[str, list[Line]] = {}
-        for line in group:
-            centre = line.x + line.width / 2
-            name = min(order, key=lambda column: abs(centres[column] - centre))
-            cells.setdefault(name, []).append(line)
-        text = {name: " ".join(cell.text for cell in sorted(found, key=lambda cell: cell.x)) for name, found in cells.items()}
-        meter = re.sub(r"\D", "", text.get("meter", ""))
-        values = {name: _number(text[name]) for name in NUMERIC if name in text}
-        if len(meter) < 6 or values.get("kwh") is None or values.get("cost") is None:
-            continue
-        result.append(StatementLine(
-            meter=meter, energy=(text.get("energy") or "").strip() or None, page=page,
-            box=_union([line.box for line in group]),
-            cells={name: _union([cell.box for cell in found]) for name, found in cells.items()},
-            **values,
-        ))
-    return result
 
 
 def statement_period(lines: Iterable[Line]) -> str | None:
