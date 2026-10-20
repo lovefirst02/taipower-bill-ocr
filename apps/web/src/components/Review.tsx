@@ -5,7 +5,7 @@ import { lineBoxes, linesAt, linesBox, PICK_LABELS, placeLabel, valueFor } from 
 import type { Box } from "../pick";
 import type { Column, Issue, Item, Mark, MarkColors, Row, Site, ValueSource, ViewPage } from "../types";
 import { FieldForm } from "./FieldForm";
-import { GreenTable } from "./GreenTable";
+import { draftOf, GreenTable } from "./GreenTable";
 import type { GreenDraft } from "./GreenTable";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
@@ -109,14 +109,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     setIssues(loaded.issues ?? []);
     setNotes(loaded.mark_notes ?? []);
     setSiteChoice(undefined);
-    setGreenDraft(
-      loaded.green
-        ? {
-            period: loaded.green.period ?? "",
-            lines: loaded.green.lines.map(({ check: _check, green: _green, ...cells }) => ({ ...cells })),
-          }
-        : null,
-    );
+    setGreenDraft(loaded.green ? draftOf(loaded.green) : null);
     setGreenEdited(false);
     setPicking(null);
     setTagging(null);
@@ -456,6 +449,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
               view={item.green}
               draft={greenDraft}
               editable={editable}
+              ourMeters={new Set(sites.flatMap((site) => site.meters))}
               onChange={(next) => {
                 setGreenDraft(next);
                 setGreenEdited(true);

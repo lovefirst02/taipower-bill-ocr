@@ -1003,6 +1003,7 @@ class ApiTests(unittest.TestCase):
         service = view["comparisons"]["services"][0]
         self.assertEqual((service["service"], service["taipower_list_kwh"], service["kwh_difference"]), ("1-11210-08-00210", 93219 + 556983, 0))
         self.assertEqual((service["taipower_list_fees"], service["fee_difference"]), (7252 + 43333 + 16668 + 99589, 0))
+        self.assertEqual(service["sections"], ["轉供輸電費清單", "轉供配電費清單"])
         # A notice that does not match is shown with the difference.
         other = self.upload_as("notice2.png", purchase_notice(kwh="650,000", supply="166,800"), user="Ben")
         services = other["green"]["comparisons"]["services"]

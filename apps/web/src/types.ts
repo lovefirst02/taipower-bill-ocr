@@ -66,6 +66,7 @@ export interface ItemSummary {
   customer_number: string | null;
   total: number | null;
   kind: DocumentKind;
+  green_type?: GreenType | null;
   site: string | null;
   submitted_at: string | null;
 }
@@ -110,23 +111,66 @@ export interface GreenLine {
   green: boolean;
 }
 
-export interface GreenCrosscheck {
+export type GreenType = "statement" | "notice" | "transfer_list";
+
+export interface TransferRowView {
+  section: string | null;
+  user_meter: string | null;
+  user_device: string | null;
+  generator: string | null;
+  generator_device: string | null;
+  kwh: number | null;
+  rate: number | null;
+  fee: number | null;
+  note?: string | null;
+  ours: boolean;
+  check: { expected: number | null; difference: number | null; status: "ok" | "check" | "incomplete" };
+}
+
+/** How one meter's transferred kWh agrees across Taipower's list, the retailer and the bills. */
+export interface MeterComparison {
+  month: string;
   meter: string;
   site: string | null;
-  statement_kwh: number;
-  taipower_kwh: number | null;
-  difference: number | null;
-  how: "same period" | "prorated" | "none" | "no period";
+  services: string[];
+  taipower_list_kwh: number | null;
+  taipower_list_fees: number | null;
+  retailer_kwh: number | null;
+  retailer_difference: number | null;
+  bill_kwh: number | null;
+  bill_difference: number | null;
+  bill_how: "same period" | "prorated" | "none" | "no period";
+  retailer_bill_difference: number | null;
   bills: { id: number; filename: string; period: string | null; kwh: number }[];
 }
 
+/** A transfer service: a purchase notice's kWh (B) and fees (E) against Taipower's list. */
+export interface ServiceComparison {
+  month: string;
+  service: string | null;
+  has_list: boolean;
+  /** The fee tables Taipower's list was read with (轉供輸電費清單, ...). */
+  sections: string[];
+  taipower_list_kwh: number;
+  taipower_list_fees: number;
+  notice: { kwh: number | null; supply_fees: number | null } | null;
+  kwh_difference: number | null;
+  fee_difference: number | null;
+}
+
 export interface GreenView {
+  type: GreenType;
+  type_name: string;
   period: string | null;
-  lines: GreenLine[];
+  service: string | null;
   tolerance: number;
-  total_kwh: number;
-  total_cost: number;
-  crosscheck: GreenCrosscheck[];
+  lines?: GreenLine[];
+  total_kwh?: number;
+  total_cost?: number | null;
+  rows?: TransferRowView[];
+  total_fees?: number;
+  values?: Record<string, number | null>;
+  comparisons: { meters: MeterComparison[]; services: ServiceComparison[]; sites_set: boolean };
 }
 
 /** Where a value came from. */

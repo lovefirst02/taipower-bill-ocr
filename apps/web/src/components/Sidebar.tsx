@@ -106,6 +106,12 @@ export function UploadQueue({ uploads, onPause, onResume, onRetry, onRemove, onR
 
 type Filter = "all" | "review" | "draft" | "submitted";
 
+const GREEN_TYPES: Record<string, string> = {
+  statement: "A retailer's green power statement",
+  notice: "A retailer's purchase notice (企業購電電費通知單)",
+  transfer_list: "Taipower's transfer fee list (轉供費用清單)",
+};
+
 interface BillListProps {
   items: ItemSummary[];
   selectedId: number | null;
@@ -156,7 +162,11 @@ export function BillList({ items, selectedId, onSelect, onDelete }: BillListProp
                 <span className="name">
                   {item.filename}{item.page ? ` · p${item.page}` : ""}
                   {item.kind === "other" && <span className="kind-badge" title="Not a Taipower bill: values found by keyword or filled in by hand">other</span>}
-                  {item.kind === "green" && <span className="kind-badge green" title="A retailer's green power statement">green</span>}
+                  {item.kind === "green" && (
+                    <span className="kind-badge green" title={GREEN_TYPES[item.green_type ?? "statement"]}>
+                      {item.green_type === "transfer_list" ? "台電清單" : item.green_type === "notice" ? "購電通知" : "售電明細"}
+                    </span>
+                  )}
                 </span>
                 <span className="meta">
                   {item.site ? `${item.site} · ` : ""}{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}

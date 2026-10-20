@@ -29,3 +29,22 @@ describe("cells", () => {
     expect(isGreen({ energy: "風能" })).toBe(true);
   });
 });
+
+describe("Taipower's list and purchase notices", () => {
+  it("checks a fee exactly", async () => {
+    const { checkRow } = await import("./green");
+    expect(checkRow({ kwh: "26,031", rate: "0.0778", fee: "2,025" }).status).toBe("ok");
+    expect(checkRow({ kwh: 170322, rate: 0.1788, fee: 30454 }).status).toBe("ok");
+    expect(checkRow({ kwh: 240000, rate: 0.9778, fee: 18672 }).status).toBe("check");
+  });
+
+  it("checks a notice's formula", async () => {
+    const { checkNotice } = await import("./green");
+    const values = {
+      purchase_rate: 5.6, kwh: 673816, purchase_charge: 3773370, fit_rate: 5.2428, surplus_kwh: 186901,
+      surplus_charge: 66761, supply_fees: 205610, certificate_fee: 1743, untaxed: 4047484, tax: 202374, total: 4249858,
+    };
+    expect(checkNotice(values).map((check) => check.status)).toEqual(["ok", "ok", "ok", "ok", "ok"]);
+    expect(checkNotice({ ...values, supply_fees: 205600 })[2].difference).toBe(10);
+  });
+});

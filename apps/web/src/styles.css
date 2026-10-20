@@ -108,6 +108,17 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .green-table .diff.ok { color: #1e7a3c; }
 .green-table .diff.check { color: var(--danger); font-weight: 600; }
 .green-table tfoot td { border-top: 1px solid var(--border); font-weight: 600; padding-top: 4px; }
+.green-head { display: flex; gap: 12px; flex-wrap: wrap; }
+.green-head .green-period { flex: 1 1 200px; }
+.green-table tr.section td { font-weight: 600; background: var(--bg, #f4f5f7); padding-top: 6px; }
+.green-table tr.not-ours { opacity: 0.5; }
+.green-table .warn-text { color: var(--danger); }
+.notice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 12px; }
+.notice-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.notice-field span { color: var(--muted); }
+.notice-field input { padding: 3px 6px; font: inherit; }
+.notice-field.check input { border-color: var(--danger); background: #fff4e5; }
+.notice-field small { white-space: normal; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; }
 .queue-actions { display: flex; gap: 2px; }
 button.link.danger { color: var(--danger); }

@@ -310,8 +310,9 @@ def reconcile(store: Store) -> dict[str, Any]:
                     entry["taipower_list_kwh"] = (entry["taipower_list_kwh"] or 0) + row["kwh"]
                 if row.get("fee") is not None:
                     entry["taipower_list_fees"] = (entry["taipower_list_fees"] or 0) + row["fee"]
-                service = services.setdefault((month, statement.get("service")), {"month": month, "service": statement.get("service"),
-                                                                                  "taipower_list_kwh": 0, "taipower_list_fees": 0, "notice": None, "documents": []})
+                service = services.setdefault((month, statement.get("service")), _service(month, statement.get("service")))
+                if row.get("section"):
+                    service["sections"].add(row["section"])
                 if pair in seen and row.get("kwh") is not None and row is _first(statement, pair):
                     service["taipower_list_kwh"] += row["kwh"]
                 service["taipower_list_fees"] += row.get("fee") or 0
@@ -324,8 +325,7 @@ def reconcile(store: Store) -> dict[str, Any]:
                 entry["retailer_kwh"] = (entry["retailer_kwh"] or 0) + line["kwh"]
                 entry["documents"].append(reference)
         else:
-            service = services.setdefault((month, statement.get("service")), {"month": month, "service": statement.get("service"),
-                                                                              "taipower_list_kwh": 0, "taipower_list_fees": 0, "notice": None, "documents": []})
+            service = services.setdefault((month, statement.get("service")), _service(month, statement.get("service")))
             service["notice"] = {"kwh": (statement.get("values") or {}).get("kwh"), "supply_fees": (statement.get("values") or {}).get("supply_fees")}
             service["documents"].append(reference)
 
@@ -348,11 +348,18 @@ def reconcile(store: Store) -> dict[str, Any]:
         has_list = any(document["type"] == TRANSFER_LIST for document in service["documents"])
         service.update(
             has_list=has_list,
+            # The fee tables read (輸電, 配電, ...): a list missing some cannot add up to the notice's E.
+            sections=sorted(service["sections"]),
             kwh_difference=None if not has_list or notice.get("kwh") is None else notice["kwh"] - service["taipower_list_kwh"],
             fee_difference=None if not has_list or notice.get("supply_fees") is None else notice["supply_fees"] - service["taipower_list_fees"],
         )
         service_rows.append(service)
     return {"meters": meter_rows, "services": service_rows, "sites_set": bool(ours)}
+
+
+def _service(month: str, service: str | None) -> dict[str, Any]:
+    return {"month": month, "service": service, "taipower_list_kwh": 0, "taipower_list_fees": 0, "sections": set(),
+            "notice": None, "documents": []}
 
 
 def _first(statement: Mapping[str, Any], pair: tuple[str, str]) -> Mapping[str, Any] | None:
@@ -431,7 +438,7 @@ LIST_COLUMNS = ["月份", "服務編號", "費用項目", "據點", "本公司",
 CHECK_COLUMNS = ["月份", "據點", "電號", "服務編號", "台電清單轉供度數", "售電業者轉供度數", "差異（售電業者−台電清單）",
                  "台電帳單轉供度數", "差異（帳單−台電清單）", "帳單比對方式", "台電清單轉供費用"]
 SERVICE_COLUMNS = ["月份", "服務編號", "台電清單轉供度數（本公司）", "通知單購電量 B", "差異（B−台電清單）",
-                   "台電清單轉供費用（本公司）", "通知單電能供應費用 E", "差異（E−台電清單）"]
+                   "台電清單轉供費用（本公司）", "通知單電能供應費用 E", "差異（E−台電清單）", "台電清單費用項目"]
 HOW = {"same period": "期間相同", "prorated": "期間不同，依天數換算", "none": "找不到台電帳單", "no period": "沒有期間"}
 STATUS = {"ok": "符合", "check": "需確認", "incomplete": "資料不全"}
 
@@ -499,5 +506,6 @@ def check_rows(store: Store) -> tuple[list[list[Any]], list[list[Any]]]:
         entry["month"], entry["service"], entry["taipower_list_kwh"] if entry["has_list"] else None,
         (entry["notice"] or {}).get("kwh"), entry["kwh_difference"],
         entry["taipower_list_fees"] if entry["has_list"] else None, (entry["notice"] or {}).get("supply_fees"), entry["fee_difference"],
+        "、".join(entry["sections"]) or None,
     ] for entry in every["services"]]
     return meter_rows, service_rows

@@ -6,7 +6,13 @@ type Kept = {
   issues: Issue[];
   mark_notes: string[];
   site_id?: number | null;
-  green?: { period: string; lines: Record<string, string | number | null | undefined>[] };
+  green?: {
+    period: string;
+    service?: string;
+    lines?: Record<string, string | number | null | undefined>[];
+    rows?: Record<string, string | number | null | undefined>[];
+    values?: Record<string, string | number | null | undefined>;
+  };
 };
 type Tags = { mark_tags: string[]; defaults: string[] };
 
