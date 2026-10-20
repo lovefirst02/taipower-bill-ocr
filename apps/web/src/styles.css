@@ -353,3 +353,15 @@ main { flex: 1; min-width: 0; display: flex; }
 .verdict.ok { color: var(--ok); }
 .verdict.check { color: var(--danger); font-weight: 600; }
 .verdict.muted { color: var(--muted); }
+.planner .over { color: var(--danger); }
+.plan-sites input, .plan-months input { width: 92px; padding: 2px 4px; font: inherit; font-size: 12px; box-sizing: border-box; }
+.plan-sites input::placeholder, .plan-months input::placeholder { color: #9aa0a6; }
+.plan-sites tr { cursor: pointer; }
+.plan-sites tr.chosen td { background: var(--edited); }
+.plan-months th { text-align: left; white-space: nowrap; }
+.plan-months thead th { text-align: right; }
+.plan-months td.total { font-weight: 600; border-left: 1px solid var(--border); }
+.plan-months tr.strong td, .plan-months tr.strong th { font-weight: 600; }
+.plan-months input { width: 76px; }
+.plan-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; margin: 6px 0; }
+.plan-controls input.short { width: 60px; margin-left: 4px; }

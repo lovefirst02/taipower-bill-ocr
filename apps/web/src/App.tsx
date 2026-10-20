@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { BudgetPlanner } from "./components/BudgetPlanner";
 import { Dashboard } from "./components/Dashboard";
 import { Review } from "./components/Review";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -51,6 +52,7 @@ export default function App() {
   const [output, setOutput] = useState<OutputInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [showBudget, setShowBudget] = useState(false);
   // The upload dialog: the files dropped to open it, and the last choice of what they are.
   const [uploadFiles, setUploadFiles] = useState<File[] | null>(null);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
@@ -206,7 +208,11 @@ export default function App() {
           >
             Download all PDFs
           </a>
-          <button className={showDashboard ? "active" : ""} onClick={() => setShowDashboard(!showDashboard)}
+          <button className={showBudget ? "active" : ""} onClick={() => { setShowBudget(!showBudget); setShowDashboard(false); }}
+            title="Plan the electricity budget: site × month × energy">
+            Budget
+          </button>
+          <button className={showDashboard ? "active" : ""} onClick={() => { setShowDashboard(!showDashboard); setShowBudget(false); }}
             title="Grey and green power (solar, wind) per month and site">
             Dashboard
           </button>
@@ -227,10 +233,12 @@ export default function App() {
             onRemove={removeUpload}
             onRemoveAll={removeAllUploads}
           />
-          <BillList items={items} selectedId={selected} onSelect={(id) => { setShowDashboard(false); setSelected(id); }} onDelete={deleteItems} />
+          <BillList items={items} selectedId={selected} onSelect={(id) => { setShowDashboard(false); setShowBudget(false); setSelected(id); }} onDelete={deleteItems} />
         </nav>
         <main>
-          {showDashboard ? (
+          {showBudget ? (
+            <BudgetPlanner key={settingsVersion} />
+          ) : showDashboard ? (
             <Dashboard key={settingsVersion} onOpenSettings={() => setShowSettings(true)} onOpenItem={(id) => { setShowDashboard(false); setSelected(id); }} />
           ) : selected !== null && columns.length ? (
             <Review

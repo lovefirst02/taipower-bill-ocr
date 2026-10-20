@@ -383,6 +383,56 @@ export interface MixDocument {
   unit_price?: number | null;
 }
 
+/** One month of a site's budget for an energy. */
+export interface PlanMonth {
+  month: string;
+  kwh: number | null;
+  /** Where the kWh and price come from when not typed in. */
+  kwh_source: "manual" | "last year" | null;
+  rate: number | null;
+  rate_source: "manual" | "last year" | "contract" | null;
+  estimated_cost: number | null;
+  planned: number;
+  actual_kwh: number | null;
+  actual_cost: number | null;
+  actual_rate: number | null;
+  has_actual: boolean;
+  adopted_cost: number;
+  prior_carry: number;
+  available: number;
+  balance: number;
+}
+
+export type PlanEnergy = "grey" | "solar" | "wind";
+
+export interface EnergyPlan {
+  energy: PlanEnergy;
+  /** The approved annual budget typed in; null: the estimates added up. */
+  annual_input: number | null;
+  annual: number;
+  method: "approved" | "estimate";
+  adjustment_pct: number;
+  months: PlanMonth[];
+  actual_cost: number;
+  utilization: number | null;
+}
+
+export interface SitePlan {
+  site: string;
+  entity: string | null;
+  total_budget: number | null;
+  energies_total: number;
+  /** The site's whole budget against its energies' budgets. */
+  allocation: "ok" | "check" | null;
+  energies: Record<PlanEnergy, EnergyPlan>;
+}
+
+export interface Plan {
+  year: number;
+  sites: SitePlan[];
+  can_edit: boolean;
+}
+
 /** A month's budget for a site (green costs left empty are estimated from the contracts). */
 export interface BudgetRow {
   month: string;

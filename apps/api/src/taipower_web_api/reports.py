@@ -23,7 +23,7 @@ from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_m
 
 from taipower_bill_ocr.periods import split_by_month
 
-from . import documents, green, mix
+from . import budget_plan, documents, green, mix
 from .store import Store, meter_number
 
 UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出者", "送出時間", "狀態", "證據檔"
@@ -234,6 +234,10 @@ def report_tables(pages: list[Mapping[str, Any]], store: Store, output_dir: Path
         "GreenServices": (green.SERVICE_COLUMNS, checks[1]),
         # Grey and green (by energy) kWh and costs per month and meter.
         "EnergyMix": (mix.MIX_COLUMNS, mix.mix_rows(pages, store, services or {})),
+        # For Power BI: actuals per site and month, and the budget per site, month and energy.
+        "Actual_Data": (budget_plan.ACTUAL_COLUMNS, budget_plan.actual_rows(budget_plan.actuals(store, services or {}))),
+        "PowerBI_EnergyBudget": (budget_plan.FACT_COLUMNS, [
+            row for year in store.plan_years() for row in budget_plan.fact_rows(budget_plan.plan(store, year, services or {}))]),
     }
 
 
@@ -252,7 +256,7 @@ def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = No
             sheet.append(report_row(page))
     if store is not None:
         tables = report_tables(pages, store, None, tolerance, services)
-        for name in ("Monthly", "EnergyMix", "GreenPower", "TransferList", "GreenCheck", "GreenServices"):
+        for name in ("Monthly", "EnergyMix", "GreenPower", "TransferList", "GreenCheck", "GreenServices", "Actual_Data", "PowerBI_EnergyBudget"):
             columns, rows = tables[name]
             extra = workbook.create_sheet(name)
             extra.append(columns)

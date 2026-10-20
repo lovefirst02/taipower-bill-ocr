@@ -1420,6 +1420,96 @@ class ApiTests(unittest.TestCase):
         mine = next(entry for entry in dashboard["costs"] if entry["id"] == ours["id"])
         self.assertEqual(next(item for item in mine["items"] if item["key"] == "contract")["check"]["status"], "check")
 
+    def plan_setup(self):
+        local = self.local_client()
+        tw21 = local.put("/api/entities", json={"entities": [{"name": "ASML TW21", "code": "TW21"}]}).json()[0]["id"]
+        self.save_sites([{"name": "TNF", "entity_id": tw21, "meters": ["05785204210"]}])
+        local.put("/api/contracts", json={"contracts": [
+            {"entity_id": tw21, "energy": "太陽能", "price": 5.6, "transfer_rate": 0.3051, "certificate_rate": 0.0026, "start_month": "2026-01"}]})
+        for name, start, end in (("last year.png", "114/08/01", "114/08/31"), ("this year.png", "115/08/01", "115/08/31")):
+            bill = official_sample_bill()  # 15,000 kWh, NT$761,905 before tax
+            bill["user_info"]["customer_number"] = "05785204210"
+            bill["user_info"]["billing_period"] = {"start": start, "end": end}
+            self.upload_as(name, bill)
+        return local
+
+    def test_a_budget_is_planned_by_site_month_and_energy(self):
+        local = self.plan_setup()
+        empty = self.client.get("/api/plan", params={"year": 2026}).json()
+        grey = empty["sites"][0]["energies"]["grey"]
+        august = grey["months"][7]
+        # Defaults: last year's August kWh at last year's price; solar at the contract's price.
+        self.assertEqual((august["kwh"], august["kwh_source"], august["rate"], august["rate_source"]), (15000, "last year", round(761905 / 15000, 4), "last year"))
+        self.assertEqual(empty["sites"][0]["energies"]["solar"]["months"][0]["rate"], 5.9077)
+        self.assertEqual((grey["method"], grey["annual"]), ("estimate", 761905))  # the estimates added up
+        self.assertEqual(self.client.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey"}).status_code, 403)
+
+        saved = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey", "annual_budget": 1200000, "adjustment_pct": 10,
+                                             "months": {"01": {"kwh": 10000, "rate": 4}}}).json()
+        grey = saved["sites"][0]["energies"]["grey"]
+        months = grey["months"]
+        self.assertEqual((grey["method"], grey["annual"]), ("approved", 1200000))
+        self.assertEqual((months[0]["kwh_source"], months[0]["estimated_cost"]), ("manual", 44000))  # 10,000 × 4 × 1.10
+        august_estimate = 15000 * (761905 / 15000) * 1.1
+        self.assertAlmostEqual(months[7]["estimated_cost"], august_estimate, delta=1)
+        self.assertEqual(sum(month["planned"] for month in months), 1200000)  # shared by the estimates
+        self.assertEqual(months[0]["planned"], round(1200000 * 44000 / (44000 + august_estimate)))
+        # The balance rolls on; August's actual is adopted.
+        self.assertEqual((months[0]["prior_carry"], months[0]["adopted_cost"]), (0, 44000))
+        self.assertEqual(months[1]["prior_carry"], months[0]["balance"])
+        self.assertEqual((months[7]["has_actual"], months[7]["adopted_cost"], months[7]["actual_kwh"]), (True, 761905, 15000))
+        self.assertEqual(months[7]["available"], months[7]["planned"] + months[7]["prior_carry"])
+        self.assertEqual(months[7]["balance"], round(months[7]["available"] - 761905, 2))
+        self.assertEqual(grey["utilization"], round(761905 / 1200000, 4))
+
+        # The site's whole budget is checked against its energies' budgets.
+        local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "total", "annual_budget": 2000000})
+        site = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]
+        self.assertEqual((site["total_budget"], site["allocation"]), (2000000, "check"))
+
+        # Budget vs actual uses the planned budget.
+        budget_rows = {row["month"]: row for row in self.client.get("/api/budget").json()["rows"] if row["site"] == "TNF"}
+        self.assertEqual(budget_rows["2026-08"]["grey_cost"], months[7]["planned"])
+
+        # Power BI: a row per site, month and energy; the actuals per site and month.
+        book = load_workbook(io.BytesIO(self.client.get("/api/export.xlsx", params={"user": "Amy"}).content))
+        header = [cell.value for cell in book["PowerBI_EnergyBudget"][1]]
+        facts = [dict(zip(header, row)) for row in book["PowerBI_EnergyBudget"].iter_rows(min_row=2, values_only=True)]
+        self.assertEqual(len(facts), 1 * 12 * 3)
+        aug = next(row for row in facts if row["Month"] == 8 and row["EnergyType"] == "Grey")
+        self.assertEqual((aug["SiteName"], aug["ActualCost"], aug["DataStatus"], aug["BudgetMethod"]), ("TNF", 761905, "Actual", "Approved"))
+        header = [cell.value for cell in book["Actual_Data"][1]]
+        actual = [dict(zip(header, row)) for row in book["Actual_Data"].iter_rows(min_row=2, values_only=True)]
+        self.assertEqual([(row["Year"], row["Month"], row["GreyKWh"], row["GreyCost"]) for row in actual], [(2025, 8, 15000, 761905), (2026, 8, 15000, 761905)])
+
+    def test_a_budget_plan_round_trips_through_excel(self):
+        local = self.plan_setup()
+        book = load_workbook(io.BytesIO(self.client.get("/api/plan/template.xlsx", params={"year": 2026}).content))
+        self.assertEqual(book.sheetnames[:4], ["Electricity Budget", "Electricity Budget - Grey", "Electricity Budget - Solar", "Electricity Budget - Wind"])
+        grey = book["Electricity Budget - Grey"]
+        header = [cell.value for cell in grey[1]]
+        self.assertEqual(grey.cell(2, header.index("Aug kWh (default)") + 1).value, 15000)  # the default, for reference
+        grey.cell(2, header.index("AnnualBudget") + 1).value = 900000
+        grey.cell(2, header.index("Mar kWh") + 1).value = "12,000"
+        grey.cell(2, header.index("Mar Rate") + 1).value = 4.2
+        book["Electricity Budget"].cell(2, 3).value = 900000  # the site's whole budget
+        buffer = io.BytesIO()
+        book.save(buffer)
+        upload = {"file": ("plan.xlsx", buffer.getvalue(), "application/octet-stream")}
+        self.assertEqual(self.client.post("/api/plan/import", data={"year": "2026"}, files=upload).status_code, 403)
+        self.assertEqual(local.post("/api/plan/import", data={"year": "2026"}, files=upload).status_code, 200)
+        site = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]
+        grey = site["energies"]["grey"]
+        self.assertEqual((grey["annual"], grey["months"][2]["kwh"], grey["months"][2]["rate"], grey["months"][2]["kwh_source"]), (900000, 12000, 4.2, "manual"))
+        self.assertEqual(grey["months"][7]["kwh_source"], "last year")  # left empty: still the default
+        # A site not in the settings stops the import.
+        book["Electricity Budget - Grey"].cell(2, 1).value = "不存在"
+        buffer = io.BytesIO()
+        book.save(buffer)
+        response = local.post("/api/plan/import", data={"year": "2026"}, files={"file": ("plan.xlsx", buffer.getvalue(), "application/octet-stream")})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("不存在", response.json()["detail"]["errors"][0])
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

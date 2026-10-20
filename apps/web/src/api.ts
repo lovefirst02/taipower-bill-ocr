@@ -1,4 +1,4 @@
-import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, BudgetRow, Contract, EnergyMix, Entity } from "./types";
+import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, BudgetRow, Contract, EnergyMix, Entity, Plan } from "./types";
 
 type Sources = Record<string, ValueSource>;
 /** Warnings the reviewer kept (the others were cleared). */
@@ -49,6 +49,17 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     return request<{ imported: number; months: string[] }>("/api/budget/import", { method: "POST", body: form });
+  },
+  plan: (year: number) => request<Plan>(`/api/plan?year=${year}`),
+  savePlan: (update: { year: number; site: string; energy: string; annual_budget: number | null; adjustment_pct?: number;
+    months?: Record<string, { kwh?: number | null; rate?: number | null }> }) =>
+    request<Plan>("/api/plan", { method: "PUT", ...json(update) }),
+  planTemplateUrl: (year: number) => `/api/plan/template.xlsx?year=${year}`,
+  importPlan: (year: number, file: File) => {
+    const form = new FormData();
+    form.append("year", String(year));
+    form.append("file", file);
+    return request<{ imported: number }>("/api/plan/import", { method: "POST", body: form });
   },
   contracts: () => request<Contract[]>("/api/contracts"),
   saveContracts: (contracts: Contract[]) => request<Contract[]>("/api/contracts", { method: "PUT", ...json({ contracts }) }),

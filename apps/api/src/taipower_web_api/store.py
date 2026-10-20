@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS budgets (
     values_json TEXT NOT NULL,       -- grey_kwh, grey_cost, solar_kwh, ... (None when not budgeted)
     PRIMARY KEY (month, site)
 );
+CREATE TABLE IF NOT EXISTS budget_plans (
+    year INTEGER NOT NULL,
+    site TEXT NOT NULL,              -- a site's name, as in the settings
+    energy TEXT NOT NULL,            -- grey | solar | wind | total (the site's whole budget)
+    annual_budget REAL,              -- approved; NULL: the sum of the estimated costs
+    adjustment_pct REAL NOT NULL DEFAULT 0,
+    months_json TEXT NOT NULL DEFAULT '{}',  -- {"01": {"kwh": .., "rate": ..}}; missing: the default
+    PRIMARY KEY (year, site, energy)
+);
 CREATE TABLE IF NOT EXISTS contracts (
     id INTEGER PRIMARY KEY,
     entity_id INTEGER,               -- NULL: every entity
@@ -359,6 +368,22 @@ class Store:
 
     def clear_budgets(self, year: str | None = None) -> None:
         self._execute("DELETE FROM budgets WHERE ? IS NULL OR month LIKE ?", (year, f"{year}-%"))
+
+    # ----------------------------------------------------------- budget plans
+    def budget_plans(self, year: int) -> list[dict[str, Any]]:
+        rows = self._query("SELECT * FROM budget_plans WHERE year = ? ORDER BY site, energy", (year,))
+        return [{**{key: row[key] for key in ("year", "site", "energy", "annual_budget", "adjustment_pct")},
+                 "months": json.loads(row["months_json"] or "{}")} for row in rows]
+
+    def plan_years(self) -> list[int]:
+        return [row[0] for row in self._query("SELECT DISTINCT year FROM budget_plans ORDER BY year")]
+
+    def save_budget_plan(self, year: int, site: str, energy: str, annual_budget: float | None,
+                         adjustment_pct: float, months: dict[str, Any]) -> None:
+        self._execute(
+            "INSERT OR REPLACE INTO budget_plans (year, site, energy, annual_budget, adjustment_pct, months_json) VALUES (?, ?, ?, ?, ?, ?)",
+            (year, site, energy, annual_budget, adjustment_pct, json.dumps(months, ensure_ascii=False)),
+        )
 
     # -------------------------------------------------------------- contracts
     def contracts(self) -> list[dict[str, Any]]:

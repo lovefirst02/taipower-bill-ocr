@@ -622,6 +622,26 @@ npm test           # 前端與後端測試
 | 餘電（通知單 (A−C)×D、明細 餘電加收） | 通知單：同一服務編號其他公司通知單的每度餘電費，依度數分攤時應相同 |
 | 憑證費、交易手續費 | 列出金額與每度 |
 
+### 預算編列（Budget）
+
+上方「Budget」頁依 **Site × 月份 × 能源（Grey／Solar／Wind）** 編列電力預算（只能在執行伺服器的電腦修改，其他人可檢視）：
+
+- **年度預算**：每個 Site 的年度總預算（可不填）與 Grey、Solar、Wind 年度預算；能源預算不填 = 各月預估費用加總。
+  Site 年度總預算與三項加總不符時標 ⚠（Allocation Check）。
+- **每月預估**：預估度數與單價可逐格輸入；不填時用預設值——度數為去年同月實際度數，灰電單價為去年平均實際單價，
+  綠電單價為合約單價＋轉供費＋憑證費（沒有合約時用去年實際每度成本）。預估費用 = 度數 × 單價 × (1 + 調整 %)，
+  調整 % 每個 Site × 能源一個。
+- **分配與滾動**：年度預算依各月預估費用比例分到 12 個月（Planned Budget，加總剛好等於年度預算）；
+  有實際費用的月份採用實際（Adopted Cost），沒有的採用預估；結餘各 Site × 能源分開滾動：
+  Prior Carry（1 月 = 0，之後 = 上月結餘）、Available = Planned + Carry、Month-End Balance = Available − Adopted。
+- **Excel**：「Excel 2026」下載整年的編列表（Electricity Budget 與 Grey／Solar／Wind 三張，預設值以灰色欄位附上），
+  填好後「Import Excel…」匯入。
+- **Power BI**：Excel 報表多兩張工作表：`PowerBI_EnergyBudget`（Site × Month × EnergyType，欄位同 Power BI 模型：
+  AnnualBudget、EstimatedKWh、EstimatedPrice、EstimatedCost、PlannedBudget、ActualKWh、ActualCost、AdoptedCost、
+  PriorCarry、AvailableBudget、MonthBalance、DataStatus、BudgetMethod）與 `Actual_Data`（每個 Site 每月的灰電、
+  太陽能、風力度數與費用）。
+- Dashboard 的「Budget vs actual」改用這裡的 Planned Budget。
+
 ### 預算 vs 實際
 
 - **預算（Excel 匯入）**：Dashboard 的「Budget vs actual」按「Budget template 2026」下載範本，每月 × Site（含 Entity）一列，

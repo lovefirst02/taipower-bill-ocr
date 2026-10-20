@@ -28,7 +28,7 @@ from taipower_bill_ocr.excel_export import (
 
 from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
 
-from . import budget, costs, documents, evidence, green, mix
+from . import budget, budget_plan, costs, documents, evidence, green, mix
 from .reports import month_shares
 from .reports import (
     WorkbookWriter,
@@ -131,6 +131,20 @@ class ContractsUpdate(BaseModel):
     contracts: list[Contract]
 
 
+class PlanMonth(BaseModel):
+    kwh: float | None = None
+    rate: float | None = None
+
+
+class PlanUpdate(BaseModel):
+    year: int
+    site: str
+    energy: str
+    annual_budget: float | None = None
+    adjustment_pct: float = 0
+    months: dict[str, PlanMonth] = {}
+
+
 class SitesUpdate(BaseModel):
     sites: list[Site]
 
@@ -155,6 +169,23 @@ def _clean_user(user: str) -> str:
     if not user or len(user) > 100:
         raise HTTPException(400, "user name is required")
     return user
+
+
+def plan_budget_rows(planned: dict[str, Any]) -> list[dict[str, Any]]:
+    """A year's plan as budget rows: each energy's estimated kWh and planned budget per site and month."""
+    rows = []
+    for site in planned["sites"]:
+        for index in range(12):
+            row: dict[str, Any] = {"month": site["energies"]["grey"]["months"][index]["month"], "entity": site["entity"],
+                                   "site": site["site"], "estimated": [], "planned": True}
+            for energy in budget_plan.ENERGIES:
+                month = site["energies"][energy]["months"][index]
+                row[f"{energy}_kwh"], row[f"{energy}_cost"] = month["kwh"], month["planned"]
+            row["total_kwh"] = sum(row[f"{energy}_kwh"] or 0 for energy in budget_plan.ENERGIES)
+            row["total_cost"] = sum(row[f"{energy}_cost"] or 0 for energy in budget_plan.ENERGIES)
+            if any(row[f"{energy}_cost"] for energy in budget_plan.ENERGIES) or row["total_kwh"]:
+                rows.append(row)
+    return rows
 
 
 def _site_name(site: dict[str, Any] | None) -> str | None:
@@ -424,11 +455,68 @@ def create_app(
         writer.write_all()  # the Monthly sheet names each bill's site
         return store.sites()
 
+    # ------------------------------------------------------- budget planning
+    def services_energy() -> dict[str, str]:
+        return mix.parse_services(settings.green_services)
+
+    @app.get("/api/plan")
+    def budget_plan_view(year: int, request: Request) -> dict[str, Any]:
+        """A year's electricity budget: every site and energy, month by month, worked out."""
+        return {**budget_plan.plan(store, year, services_energy()), "can_edit": is_local(request)}
+
+    @app.put("/api/plan")
+    def save_budget_plan(update: PlanUpdate, request: Request) -> dict[str, Any]:
+        """One site's budget for an energy (or its whole budget, energy "total"); only on the server's PC."""
+        if not is_local(request):
+            raise HTTPException(403, "the budget can only be changed on the computer running the server")
+        if update.site not in {site["name"] for site in store.sites()}:
+            raise HTTPException(400, "unknown site")
+        if update.energy not in (*budget_plan.ENERGIES, "total"):
+            raise HTTPException(400, "energy must be grey, solar, wind or total")
+        if not -100 < update.adjustment_pct < 1000:
+            raise HTTPException(400, "adjustment out of range")
+        months = {}
+        for month, values in update.months.items():
+            if month not in budget_plan.MONTHS:
+                raise HTTPException(400, f"month {month}: use 01 to 12")
+            given = {key: value for key, value in values.model_dump().items() if value is not None}
+            if given:
+                months[month] = given
+        store.save_budget_plan(update.year, update.site, update.energy, update.annual_budget, update.adjustment_pct, months)
+        writer.write_all()
+        return budget_plan_view(update.year, request)
+
+    @app.get("/api/plan/template.xlsx")
+    def budget_plan_template(year: int) -> Response:
+        return Response(
+            budget_plan.template_workbook(store, year, services_energy()),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=_attachment(f"electricity_budget_{year}.xlsx"),
+        )
+
+    @app.post("/api/plan/import")
+    async def import_budget_plan(request: Request, year: int = Form(...), file: UploadFile = File(...)) -> dict[str, Any]:
+        """A filled-in plan workbook for a year; only on the server's PC."""
+        if not is_local(request):
+            raise HTTPException(403, "the budget can only be changed on the computer running the server")
+        rows, errors = budget_plan.read_workbook(await file.read(), store, year)
+        if errors:
+            raise HTTPException(400, {"errors": errors[:50]})
+        for row in rows:
+            store.save_budget_plan(year, row["site"], row["energy"], row["annual_budget"], row["adjustment_pct"], row["months"])
+        writer.write_all()
+        return {"imported": len(rows)}
+
     # ---------------------------------------------------------------- budget
     @app.get("/api/budget")
     def budgets(request: Request) -> dict[str, Any]:
         """The budgets as compared with the actuals (green costs left empty estimated from the contracts)."""
-        return {"rows": budget.with_estimates(store.budgets(), store), "can_edit": is_local(request)}
+        rows = {(row["month"], row["site"]): row for row in budget.with_estimates(store.budgets(), store)}
+        # A year planned in the system: its planned budget per site and month.
+        for year in store.plan_years():
+            for row in plan_budget_rows(budget_plan.plan(store, year, services_energy())):
+                rows[(row["month"], row["site"])] = row
+        return {"rows": sorted(rows.values(), key=lambda row: (row["month"], row["site"])), "can_edit": is_local(request)}
 
     @app.get("/api/budget/template.xlsx")
     def budget_template(year: int) -> Response:
