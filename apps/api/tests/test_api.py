@@ -1236,6 +1236,29 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(saved["green"]["charges_check"]["difference"], -571)
         self.assertTrue(any("Total" in issue["zh"] for issue in saved["issues"]))
 
+    def test_a_statements_fees_on_a_page_of_their_own_are_read(self):
+        def charges_page():
+            # The table ended on page 1; page 2 has only the fees, tax and total.
+            page = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+            page.ocr_lines = [
+                OcrLine("交易手續費", 700, 380, 120, 24, None), OcrLine("12", 930, 380, 20, 24, None),
+                OcrLine("稅額", 760, 412, 50, 24, None), OcrLine("122,361", 890, 412, 80, 24, None),
+                OcrLine("Total", 870, 590, 70, 30, None), OcrLine("2,569,571", 655, 640, 200, 50, None),
+            ]
+            return page
+
+        pages = {1: green_statement, 2: charges_page}
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, number: pages[number]()):
+            self.client.post("/api/uploads", data={"user": "Amy", "kind": "green"}, files=[("files", ("wind.pdf", three_page_pdf(2), "application/pdf"))])
+            self.app.state.worker.wait_idle(30)
+        items = self.client.get("/api/items", params={"user": "Amy"}).json()
+        self.assertEqual(len(items), 1)
+        detail = self.client.get(f"/api/items/{items[0]['id']}").json()
+        self.assertEqual([page["page"] for page in detail["pages"]], [1, 2])
+        self.assertEqual(detail["green"]["charges"], {"fee": 12, "tax": 122361, "total": 2569571})
+        self.assertEqual(detail["green"]["charges_check"]["status"], "ok")
+        self.assertEqual(items[0]["total"], 2447198 + 12)
+
     def test_a_retailer_is_compared_with_its_own_service_on_a_shared_meter(self):
         """One meter gets solar and wind: the wind statement is held against the wind list only."""
         self.save_sites([{"name": "總廠", "meters": ["05785193319"]}])

@@ -174,7 +174,9 @@ def _read(lines: list, all_lines: list, page: dict[str, Any], group: list[dict[s
     table = read_statement(group_lines)
     if table is not None:
         # Fees outside the table (交易手續費), the tax and the total due.
-        charges = {name: value for name, (value, _box, _page) in statement_charges(group_lines).items()}
+        # Read over every page of the document: the fees and total are often
+        # on a last page of their own, after the table has ended.
+        charges = {name: value for name, (value, _box, _page) in statement_charges(all_lines).items()}
         statement = {"type": STATEMENT, "period": statement_period(all_lines), "lines": [line.as_json() for line in table.lines],
                      "charges": charges}
         # The kWh and charge columns marked on each page of the table.
