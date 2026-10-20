@@ -8,7 +8,15 @@ const ENERGIES: { key: PlanEnergy; label: string }[] = [
   { key: "wind", label: "Wind 風力" },
 ];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const SOURCES: Record<string, string> = { "last year": "去年實際", contract: "合約", manual: "" };
+const SOURCES: Record<string, string> = {
+  "last year": "去年同月實際", "last year avg": "去年平均月（去年同月沒有資料）", "this year avg": "今年已有月份的平均（沒有去年資料）",
+  "this year": "今年實際平均單價", contract: "合約（價格＋轉供費＋憑證費）", manual: "",
+};
+const ALLOCATIONS: Record<string, string> = {
+  estimate: "shared by the estimates",
+  "estimate + average": "shared by the estimates; months without one weigh as the average month",
+  even: "no estimates: shared evenly over 12 months",
+};
 
 const money = (value: number | null | undefined) => (value === null || value === undefined ? "—" : Math.round(value).toLocaleString());
 const number = (text: string): number | null => {
@@ -196,7 +204,7 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
   return (
     <>
       <div className="plan-controls">
-        <span>Annual budget: <strong>NT${money(plan.annual)}</strong> ({plan.method === "approved" ? "approved" : "estimates added up"})</span>
+        <span>Annual budget: <strong>NT${money(plan.annual)}</strong> ({plan.method === "approved" ? "approved" : "estimates added up"}; {ALLOCATIONS[plan.allocation]})</span>
         <label>Adjustment % <input className="num short" value={adjustment} disabled={!canEdit} placeholder="0" onChange={(event) => setAdjustment(event.target.value)} /></label>
         <span>Used: {plan.utilization === null ? "—" : `${(plan.utilization * 100).toFixed(1)}%`}</span>
         {canEdit && <button type="button" className="primary" disabled={!dirty} onClick={save}>Save</button>}

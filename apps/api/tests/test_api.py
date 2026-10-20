@@ -1441,7 +1441,8 @@ class ApiTests(unittest.TestCase):
         # Defaults: last year's August kWh at last year's price; solar at the contract's price.
         self.assertEqual((august["kwh"], august["kwh_source"], august["rate"], august["rate_source"]), (15000, "last year", round(761905 / 15000, 4), "last year"))
         self.assertEqual(empty["sites"][0]["energies"]["solar"]["months"][0]["rate"], 5.9077)
-        self.assertEqual((grey["method"], grey["annual"]), ("estimate", 761905))  # the estimates added up
+        # The estimates added up: August, and last year's average month for the others.
+        self.assertEqual((grey["method"], grey["annual"]), ("estimate", 12 * 761905))
         self.assertEqual(self.client.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey"}).status_code, 403)
 
         saved = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey", "annual_budget": 1200000, "adjustment_pct": 10,
@@ -1453,7 +1454,7 @@ class ApiTests(unittest.TestCase):
         august_estimate = 15000 * (761905 / 15000) * 1.1
         self.assertAlmostEqual(months[7]["estimated_cost"], august_estimate, delta=1)
         self.assertEqual(sum(month["planned"] for month in months), 1200000)  # shared by the estimates
-        self.assertEqual(months[0]["planned"], round(1200000 * 44000 / (44000 + august_estimate)))
+        self.assertEqual(months[0]["planned"], round(1200000 * 44000 / (44000 + 11 * august_estimate)))
         # The balance rolls on; August's actual is adopted.
         self.assertEqual((months[0]["prior_carry"], months[0]["adopted_cost"]), (0, 44000))
         self.assertEqual(months[1]["prior_carry"], months[0]["balance"])
@@ -1481,6 +1482,24 @@ class ApiTests(unittest.TestCase):
         header = [cell.value for cell in book["Actual_Data"][1]]
         actual = [dict(zip(header, row)) for row in book["Actual_Data"].iter_rows(min_row=2, values_only=True)]
         self.assertEqual([(row["Year"], row["Month"], row["GreyKWh"], row["GreyCost"]) for row in actual], [(2025, 8, 15000, 761905), (2026, 8, 15000, 761905)])
+
+    def test_without_last_years_documents_the_budget_falls_back_to_averages_then_even(self):
+        local = self.plan_setup()  # grey: August of last year and of this year
+        # Wind: nothing at all, an approved budget: shared evenly.
+        wind = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "wind", "annual_budget": 1200000}).json()["sites"][0]["energies"]["wind"]
+        self.assertEqual((wind["allocation"], {month["planned"] for month in wind["months"]}), ("even", {100000}))
+        # Grey: last year has only August, so the other months take last year's average month (15,000 kWh).
+        grey = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]["energies"]["grey"]
+        self.assertEqual({(month["kwh"], month["kwh_source"]) for month in grey["months"]},
+                         {(15000, "last year"), (15000, "last year avg")})
+        self.assertEqual(grey["allocation"], "estimate")
+        # Grey in 2027: no 2026 bills but August → 2026's average month; then a typed month among empty ones.
+        later = local.put("/api/plan", json={"year": 2028, "site": "TNF", "energy": "grey", "annual_budget": 1300000,
+                                             "months": {"01": {"kwh": 1000, "rate": 4}}}).json()["sites"][0]["energies"]["grey"]
+        self.assertEqual(later["allocation"], "estimate + average")  # nothing for 2027: only January is estimated
+        shares = [month["planned"] for month in later["months"]]
+        self.assertLessEqual(max(shares) - min(shares), 1)  # the others weigh as January (whole NT$)
+        self.assertEqual(sum(month["planned"] for month in later["months"]), 1300000)
 
     def test_a_budget_plan_round_trips_through_excel(self):
         local = self.plan_setup()

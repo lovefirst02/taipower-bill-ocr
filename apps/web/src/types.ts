@@ -388,9 +388,11 @@ export interface PlanMonth {
   month: string;
   kwh: number | null;
   /** Where the kWh and price come from when not typed in. */
-  kwh_source: "manual" | "last year" | null;
+  kwh_source: "manual" | "last year" | "last year avg" | "this year avg" | null;
   rate: number | null;
-  rate_source: "manual" | "last year" | "contract" | null;
+  rate_source: "manual" | "last year" | "this year" | "contract" | null;
+  /** How the month weighs in sharing the annual budget. */
+  weight_source?: "estimate" | "average" | "even";
   estimated_cost: number | null;
   planned: number;
   actual_kwh: number | null;
@@ -411,6 +413,8 @@ export interface EnergyPlan {
   annual_input: number | null;
   annual: number;
   method: "approved" | "estimate";
+  /** By the estimates; gaps weighed as the average month; or evenly (no estimates at all). */
+  allocation: "estimate" | "estimate + average" | "even";
   adjustment_pct: number;
   months: PlanMonth[];
   actual_cost: number;
