@@ -4,6 +4,7 @@ import { energies, energyPrice, greenShare, groupBy, total, unitPrice, SOLAR, UN
 import type { MixTotal } from "../mix";
 import type { EnergyMix, MixDocument, MixRow } from "../types";
 import { BudgetSection } from "./BudgetSection";
+import { CostSummary } from "./CostBreakdown";
 
 const GREY = "#9aa0a6";
 const COLORS: Record<string, string> = { [SOLAR]: "#f2a900", [WIND]: "#1a9bb5", [UNCLASSIFIED]: "#9ccc65" };
@@ -20,7 +21,7 @@ const NO_ENTITY = "(no entity)";
 const SOURCES: Record<string, string> = { transfer_list: "Taipower list", statement: "Retailer", bill: "Bill 轉供度數" };
 
 /** Grey and green power (solar, wind ...) per month and site. */
-export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function Dashboard({ onOpenSettings, onOpenItem }: { onOpenSettings: () => void; onOpenItem: (id: number) => void }) {
   const [mix, setMix] = useState<EnergyMix | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submittedOnly, setSubmittedOnly] = useState(false);
@@ -43,6 +44,9 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
     [mix, year, site, entity],
   );
   const kinds = useMemo(() => energies(rows), [rows]);
+  // Our retailers' documents (not other companies' notices), as the filters choose.
+  const costs = (mix?.costs ?? []).filter((cost) => cost.ours && (year === "all" || cost.month.startsWith(year))
+    && (entity === "all" || (cost.entity ?? NO_ENTITY) === entity));
   const sum = useMemo(() => total(rows), [rows]);
   const months = useMemo(() => groupBy(rows, (row) => row.month), [rows]);
   const bySite = useMemo(() => groupBy(rows, (row) => row.site ?? NO_SITE), [rows]);
@@ -92,6 +96,17 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
           </div>
 
           <BudgetSection actuals={rows} year={year} entity={entity} site={site} />
+
+          {costs.length > 0 && (
+            <section className="dash-card">
+              <h3>Green power cost per kWh, item by item</h3>
+              <CostSummary costs={costs} onOpen={onOpenItem} />
+              <p className="hint">
+                合約電價 against Settings → Green power contracts; 台電轉供 against Taipower&apos;s fees for the same meters on its transfer list;
+                餘電 against the other companies&apos; notices for the service (shared by kWh). Hover a ⚠ for why; click a document to open it.
+              </p>
+            </section>
+          )}
 
           <section className="dash-card">
             <h3>kWh per month</h3>

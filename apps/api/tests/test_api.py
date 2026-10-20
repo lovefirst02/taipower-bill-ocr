@@ -1257,6 +1257,11 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((meter["taipower_list_kwh"], meter["retailer_kwh"], meter["retailer_list_kwh"], meter["retailer_difference"]),
                          (93219 + 5000, 5000, 5000, 0))
         self.assertEqual(meter["retailer_service"], "1-11311-08-00502")
+        # The retailer's 電能轉供費 (5,000 × 0.3052) against Taipower's fees on the wind list (389).
+        items = {item["key"]: item for item in detail["green"]["cost"]["items"]}
+        taipower = items["taipower"]["check"]
+        self.assertEqual((items["taipower"]["amount"], taipower["reference"], taipower["status"], taipower["service"]), (1526, 389, "over", "1-11311-08-00502"))
+        self.assertEqual(items["contract"]["check"]["status"], "none")  # no contract set
 
     def test_budget_is_imported_from_the_template_and_green_costs_estimated_from_contracts(self):
         local = self.local_client()
@@ -1359,6 +1364,38 @@ class ApiTests(unittest.TestCase):
         client = TestClient(create_app(settings, extractor_factory=FakeExtractor, start_worker=False))
         self.assertEqual(client.get("/").headers["cache-control"], "no-cache")
         self.assertEqual(client.get("/some/page").headers["cache-control"], "no-cache")
+
+    def test_green_cost_per_kwh_is_broken_down_and_each_item_checked(self):
+        local = self.local_client()
+        entities = local.put("/api/entities", json={"entities": [{"name": "ASML TW21", "code": "TW21"}, {"name": "ASML TW01", "code": "TW01"}]}).json()
+        ids = {entity["code"]: entity["id"] for entity in entities}
+        self.save_sites([{"name": "彰化廠", "entity_id": ids["TW21"], "meters": ["05785193319", "05785204210"]}])
+        local.put("/api/contracts", json={"contracts": [{"entity_id": ids["TW21"], "energy": "太陽能", "price": 5.6, "start_month": "2026-01"}]})
+        self.upload_as("list.png", transfer_list())  # our meters: 650,202 kWh, fees 166,842
+        ours = self.upload_as("Solar(TW21).png", purchase_notice())
+        other = self.upload_as("Solar(TW01).png", purchase_notice(kwh="300,000", supply="50,000"))
+
+        def values(item, **given):
+            self.client.put(f"/api/items/{item['id']}", json={"user": "Amy", "green": {
+                "period": "2026/08/01~2026/08/31", "service": "1-11210-08-00210", "values": given}})
+
+        values(ours, purchase_rate=5.6, kwh=650202, purchase_charge=3641131, fit_rate=5.2428, surplus_charge=64423,
+               supply_fees=166842, certificate_fee=1743, untaxed=3874139)
+        values(other, purchase_rate=5.6, kwh=300000, purchase_charge=1680000, surplus_charge=40000, supply_fees=50000, untaxed=1770000)
+        cost = self.client.get(f"/api/items/{ours['id']}").json()["green"]["cost"]
+        items = {item["key"]: item for item in cost["items"]}
+        self.assertEqual((cost["entity"], cost["kwh"]), ("ASML TW21", 650202))
+        self.assertEqual((items["contract"]["check"]["status"], items["contract"]["check"]["reference"]), ("ok", 5.6))
+        self.assertEqual((items["taipower"]["check"]["status"], items["taipower"]["check"]["reference"]), ("ok", 166842))
+        self.assertEqual(cost["total"]["per_kwh"], round(3874139 / 650202, 4))
+        surplus = items["surplus"]["check"]
+        self.assertEqual(len(surplus["peers"]), 2)
+        self.assertEqual(surplus["status"], "check")  # 0.0991 vs 0.1333 per kWh: shared differently
+        # A charged price unlike the contract is pointed out.
+        local.put("/api/contracts", json={"contracts": [{"entity_id": ids["TW21"], "energy": "太陽能", "price": 5.5, "start_month": "2026-01"}]})
+        dashboard = self.client.get("/api/dashboard").json()
+        mine = next(entry for entry in dashboard["costs"] if entry["id"] == ours["id"])
+        self.assertEqual(next(item for item in mine["items"] if item["key"] == "contract")["check"]["status"], "check")
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

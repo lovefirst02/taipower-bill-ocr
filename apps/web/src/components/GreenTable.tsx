@@ -2,6 +2,7 @@ import { useState } from "react";
 import { cellNumber, checkLine, checkNotice, checkRow, isGreen, meterNumber } from "../green";
 import type { Cell } from "../green";
 import type { GreenView, MeterComparison, ServiceComparison } from "../types";
+import { CostBreakdownTable } from "./CostBreakdown";
 
 /** A green power document as edited: cells stay as typed until saved. */
 export interface GreenDraft {
@@ -67,6 +68,16 @@ export function GreenTable({ view, draft, editable, ourMeters, onChange }: Props
         {view.type === "notice" && <NoticeValues draft={draft} editable={editable} onChange={onChange} />}
       </fieldset>
       <Comparisons view={view} />
+      {view.cost && (
+        <fieldset>
+          <legend>Cost per kWh, item by item (as saved)</legend>
+          <CostBreakdownTable cost={view.cost} />
+          <p className="hint">
+            The contract fixes the energy price; Taipower&apos;s transfer fees, certificates and surplus are charged as they fall due, so the
+            total per kWh moves from month to month. Each item is held against its own reference.
+          </p>
+        </fieldset>
+      )}
     </div>
   );
 }

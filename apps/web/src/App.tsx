@@ -231,7 +231,7 @@ export default function App() {
         </nav>
         <main>
           {showDashboard ? (
-            <Dashboard key={settingsVersion} onOpenSettings={() => setShowSettings(true)} />
+            <Dashboard key={settingsVersion} onOpenSettings={() => setShowSettings(true)} onOpenItem={(id) => { setShowDashboard(false); setSelected(id); }} />
           ) : selected !== null && columns.length ? (
             <Review
               key={selected}

@@ -189,7 +189,44 @@ export interface ServiceComparison {
   fee_difference: number | null;
 }
 
+/** One item of a kWh's cost and its check. */
+export interface CostItem {
+  key: "contract" | "taipower" | "certificate" | "surplus" | "fee" | "rounding" | "total";
+  label: string;
+  amount: number | null;
+  per_kwh: number | null;
+  check?: {
+    /** ok, check (wrong), over (charged more than Taipower's fees), none (nothing to check against). */
+    status: "ok" | "check" | "over" | "none";
+    reference?: number | null;
+    reference_per_kwh?: number | null;
+    difference?: number | null;
+    sections?: string[];
+    service?: string | null;
+    note: string | null;
+    /** The surplus per kWh of every company's notice for the service. */
+    peers?: { entity: string; per_kwh: number; self: boolean }[];
+  };
+}
+
+/** A retailer's document: its cost per kWh item by item. */
+export interface CostBreakdown {
+  id: number;
+  filename: string;
+  type: "statement" | "notice";
+  month: string;
+  energy: string | null;
+  entity: string | null;
+  service: string | null;
+  kwh: number;
+  items: CostItem[];
+  total: CostItem;
+  /** False for another company's notice. */
+  ours: boolean;
+}
+
 export interface GreenView {
+  cost?: CostBreakdown | null;
   type: GreenType;
   type_name: string;
   period: string | null;
@@ -382,6 +419,7 @@ export interface Contract {
 
 export interface EnergyMix {
   rows: MixRow[];
+  costs?: CostBreakdown[];
   documents: MixDocument[];
   duplicates: number;
   unclassified_services: string[];

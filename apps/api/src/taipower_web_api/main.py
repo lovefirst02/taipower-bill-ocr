@@ -28,7 +28,7 @@ from taipower_bill_ocr.excel_export import (
 
 from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
 
-from . import budget, documents, evidence, green, mix
+from . import budget, costs, documents, evidence, green, mix
 from .reports import month_shares
 from .reports import (
     WorkbookWriter,
@@ -224,7 +224,10 @@ def create_app(
 
     def green_view(page: dict[str, Any]) -> dict[str, Any] | None:
         """A green power document with its checks and how it agrees with the others."""
-        return green.view(store, page, settings) if page.get("kind") == green.GREEN else None
+        if page.get("kind") != green.GREEN:
+            return None
+        # A retailer's document: its cost per kWh item by item, each checked.
+        return {**green.view(store, page, settings), "cost": costs.for_page(store, page["id"])}
 
     def view_pages(page: dict[str, Any]) -> list[dict[str, Any]]:
         """Every page of the bill in document order; any of them can hold marks."""
@@ -381,7 +384,7 @@ def create_app(
     def dashboard(submitted_only: bool = False) -> dict[str, Any]:
         """Grey and green power per month and meter, for every user's documents."""
         pages = store.pages(bills_only=True, submitted_only=submitted_only, visible_only=True)
-        return mix.energy_mix(pages, store, mix.parse_services(settings.green_services))
+        return {**mix.energy_mix(pages, store, mix.parse_services(settings.green_services)), "costs": costs.breakdowns(store)}
 
     # ----------------------------------------------------------------- sites
     @app.get("/api/sites")

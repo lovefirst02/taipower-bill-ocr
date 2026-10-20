@@ -348,3 +348,8 @@ main { flex: 1; min-width: 0; display: flex; }
 .upload-files .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-files .meta { color: var(--muted); font-size: 12px; }
 .upload-choice select { margin-top: 4px; max-width: 320px; padding: 3px 6px; font: inherit; font-size: 13px; }
+.cost-table td.verdict, .cost-summary td.verdict { font-size: 12px; }
+.cost-table td.verdict { white-space: normal; text-align: left; }
+.verdict.ok { color: var(--ok); }
+.verdict.check { color: var(--danger); font-weight: 600; }
+.verdict.muted { color: var(--muted); }
