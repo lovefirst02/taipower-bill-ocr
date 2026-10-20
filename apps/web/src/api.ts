@@ -1,8 +1,8 @@
-import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Upload, ValueSource } from "./types";
+import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource } from "./types";
 
 type Sources = Record<string, ValueSource>;
 /** Warnings the reviewer kept (the others were cleared). */
-type Kept = { issues: Issue[]; mark_notes: string[] };
+type Kept = { issues: Issue[]; mark_notes: string[]; site_id?: number | null };
 type Tags = { mark_tags: string[]; defaults: string[] };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -57,6 +57,9 @@ export const api = {
     request<Item>(`/api/items/${id}`, { method: "PUT", ...json({ user, row, marks, sources, ...kept }) }),
   submit: (id: number, user: string, row: Row, marks: Mark[], sources: Sources, kept: Kept) =>
     request<Item>(`/api/items/${id}/submit`, { method: "POST", ...json({ user, row, marks, sources, ...kept }) }),
+  sites: () => request<Site[]>("/api/sites"),
+  saveSites: (sites: { id?: number; name: string; code: string; note: string; meters: string[] }[]) =>
+    request<Site[]>("/api/sites", { method: "PUT", ...json({ sites }) }),
   tags: (user: string) => request<Tags>(`/api/preferences?user=${encodeURIComponent(user)}`),
   saveTags: (user: string, tags: string[] | null) =>
     request<Tags>("/api/preferences", { method: "PUT", ...json({ user, mark_tags: tags }) }),

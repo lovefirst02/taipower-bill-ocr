@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { isOnPage, labelSize, markBox, newHighlight, newId, newLabel } from "../marks";
 import { lineBoxes, linesAt, linesBox, PICK_LABELS, placeLabel, valueFor } from "../pick";
 import type { Box } from "../pick";
-import type { Column, Issue, Item, Mark, MarkColors, Row, ValueSource, ViewPage } from "../types";
+import type { Column, Issue, Item, Mark, MarkColors, Row, Site, ValueSource, ViewPage } from "../types";
 import { FieldForm } from "./FieldForm";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
@@ -18,6 +18,8 @@ interface Props {
   onNotify: (text: string) => void;
   /** Current default mark colours (they can change on the settings page). */
   colors?: MarkColors | null;
+  /** Changes when the settings dialog closes (sites may have changed). */
+  settingsVersion?: number;
 }
 
 const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -54,7 +56,7 @@ function pickMarks(field: string | undefined, area: Box, page: ViewPage, label: 
   return [highlight, text];
 }
 
-export function Review({ itemId, user, columns, onChanged, onNext, onNotify, colors: defaultColors }: Props) {
+export function Review({ itemId, user, columns, onChanged, onNext, onNotify, colors: defaultColors, settingsVersion = 0 }: Props) {
   const [item, setItem] = useState<Item | null>(null);
   const [row, setRow] = useState<Row>({});
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -74,10 +76,25 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
   // Warnings still shown; the reviewer can clear them.
   const [issues, setIssues] = useState<Issue[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  // The site chosen by hand: undefined = unchanged, null = by 電號.
+  const [siteChoice, setSiteChoice] = useState<number | null | undefined>(undefined);
 
   useEffect(() => {
     api.tags(user).then(setTags).catch(() => undefined);
   }, [user]);
+
+  // The site list, again after the settings close; the bill's own site and
+  // months are refreshed too, unless there are unsaved edits to keep.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    api.sites().then(setSites).catch(() => undefined);
+    if (settingsVersion === 0 || dirtyRef.current) return;
+    api.item(itemId)
+      .then((loaded) => setItem((current) => (current ? { ...current, site: loaded.site, months: loaded.months } : current)))
+      .catch(() => undefined);
+  }, [settingsVersion, itemId]);
 
   const load = useCallback((loaded: Item) => {
     setItem(loaded);
@@ -86,6 +103,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     setSources(loaded.sources ?? {});
     setIssues(loaded.issues ?? []);
     setNotes(loaded.mark_notes ?? []);
+    setSiteChoice(undefined);
     setPicking(null);
     setTagging(null);
     setDirty(false);
@@ -130,7 +148,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     }
   };
 
-  const kept = { issues, mark_notes: notes };
+  const kept = { issues, mark_notes: notes, ...(siteChoice !== undefined ? { site_id: siteChoice } : {}) };
   const save = () => run(() => api.save(itemId, user, row, marks, sources, kept), "Draft saved");
   const redetect = () => run(() => api.redetect(itemId), "Looked for the values again with the current keywords");
   const submit = async () => {
@@ -286,6 +304,20 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
         <div>
           <h2>{item.filename}{pageLabel}</h2>
           <span className={`badge ${item.status}`}>{item.status === "submitted" ? `Submitted by ${item.submitted_by}` : "Draft"}</span>
+          <label className="site-picker" title="Where this bill belongs; by default the site of its 電號 (set in Settings → Sites)">
+            Site
+            <select
+              value={siteChoice === undefined ? (item.site?.how === "manual" ? String(item.site.id) : "") : siteChoice === null ? "" : String(siteChoice)}
+              disabled={!editable}
+              onChange={(event) => {
+                setSiteChoice(event.target.value ? Number(event.target.value) : null);
+                setDirty(true);
+              }}
+            >
+              <option value="">{item.site?.how === "meter" ? `${item.site.name} (by 電號)` : "— by 電號 (none found) —"}</option>
+              {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+            </select>
+          </label>
           {dirty && <span className="badge unsaved">Unsaved changes</span>}
         </div>
         <div className="actions">
@@ -386,6 +418,20 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             onAddLabel={(text) => { const mark = onShown(newLabel(page, text)); changeMarks([...marks, mark]); setSelectedId(mark.id); }}
             onReset={reset}
           />
+          {item.months.length > 0 && (
+            <div className="months" title="This bill split by days across calendar months, as saved; the Excel Monthly sheet uses it">
+              <h4>By month</h4>
+              <ul>
+                {item.months.map((month) => (
+                  <li key={month.月份}>
+                    <strong>{month.月份}</strong> · {month.天數} days
+                    {month.用電度數 !== null && ` · ${month.用電度數.toLocaleString()} kWh`}
+                    {month.稅前應繳總金額 !== null && ` · NT$${month.稅前應繳總金額.toLocaleString()} before tax`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <FieldForm
             columns={columns}
             row={row}

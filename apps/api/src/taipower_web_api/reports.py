@@ -21,8 +21,10 @@ from taipower_bill_ocr.dataset import PROGRAM_VERSION
 from taipower_bill_ocr.excel_export import COLUMNS, REVIEW_COLUMN
 from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_master, save_tables
 
+from taipower_bill_ocr.periods import split_by_month
+
 from . import documents
-from .store import Store
+from .store import Store, meter_number
 
 UPLOADER, SUBMITTER, SUBMITTED_AT, STATUS, EVIDENCE = "上傳者", "送出者", "送出時間", "狀態", "證據檔"
 DOCUMENT_TYPE, VALUE_SOURCES = "文件類型", "欄位來源"
@@ -141,16 +143,82 @@ def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[
     return [extras[column] if column in extras else row.get(column) for column in REPORT_COLUMNS]
 
 
-def export_workbook(pages: Iterable[Mapping[str, Any]]) -> bytes:
-    """A 17-column workbook of the given bill pages, for download."""
+MONTHLY_COLUMNS = [
+    "據點", "據點代碼", "電號", "月份", "天數", documents.USAGE, "轉供度數", "稅前應繳總金額", "應繳總金額",
+    DOCUMENT_TYPE, "Billing Period 計費期間", "來源檔案", "頁碼", STATUS, UPLOADER, SUBMITTER, EVIDENCE, "備註",
+]
+_BILLED_KWH = [f"計費度數_{label}" for label in ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")]
+_TRANSFERRED_KWH = [f"轉供度數_{label}" for label in ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")]
+
+
+def _total(row: Mapping[str, Any], columns: list[str]) -> Any:
+    values = [row.get(column) for column in columns if isinstance(row.get(column), (int, float))]
+    return sum(values) if values else None
+
+
+def usage_kwh(row: Mapping[str, Any]) -> Any:
+    """The period's usage: 用電度數, else the billed kWh of all time-of-use periods."""
+    return row.get(documents.USAGE) if row.get(documents.USAGE) is not None else _total(row, _BILLED_KWH)
+
+
+def month_shares(page: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The bill's usage and cost per calendar month, split by days (adds up exactly)."""
+    row = page.get("row") or {}
+    amounts = {
+        documents.USAGE: usage_kwh(row),
+        "轉供度數": _total(row, _TRANSFERRED_KWH),
+        "稅前應繳總金額": row.get("稅前應繳總金額"),
+        "應繳總金額": row.get("應繳總金額"),
+    }
+    return [
+        {"月份": share.month, "天數": share.days, **share.amounts}
+        for share in split_by_month(row.get("Billing Period 計費期間"), amounts)
+    ]
+
+
+def monthly_rows(pages: Iterable[Mapping[str, Any]], store: Store, output_dir: Path | None = None) -> list[list[Any]]:
+    """One row per site, 電號 and month: what the budget and Intelex use."""
+    rows = []
+    for page in pages:
+        row = page.get("row") or {}
+        site = store.site_of(page) or {}
+        base = dict(zip(REPORT_COLUMNS, report_row(page, output_dir)))
+        common = {
+            "據點": site.get("name"), "據點代碼": site.get("code"), "電號": meter_number(row.get("Custom No. 電號")),
+            DOCUMENT_TYPE: base[DOCUMENT_TYPE], "Billing Period 計費期間": row.get("Billing Period 計費期間"),
+            "來源檔案": row.get("來源檔案") or page.get("filename"), "頁碼": page.get("page_number"),
+            STATUS: base[STATUS], UPLOADER: base[UPLOADER], SUBMITTER: base[SUBMITTER], EVIDENCE: base[EVIDENCE],
+        }
+        shares = month_shares(page)
+        if not shares:
+            # The period could not be read: the whole bill, not split.
+            shares = [{
+                "月份": None, "天數": None, documents.USAGE: usage_kwh(row), "轉供度數": _total(row, _TRANSFERRED_KWH),
+                "稅前應繳總金額": row.get("稅前應繳總金額"), "應繳總金額": row.get("應繳總金額"),
+                "備註": "計費期間無法解析，未拆分",
+            }]
+        for share in shares:
+            values = {**common, **share}
+            rows.append([values.get(column) for column in MONTHLY_COLUMNS])
+    return rows
+
+
+def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = None) -> bytes:
+    """A 17-column workbook of the given bill pages, for download (and their months)."""
     from openpyxl import Workbook
 
+    pages = list(pages)
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "電費帳單"
     sheet.append(REPORT_COLUMNS)
     for page in pages:
         sheet.append(report_row(page))
+    if store is not None:
+        months = workbook.create_sheet("Monthly")
+        months.append(MONTHLY_COLUMNS)
+        for line in monthly_rows(pages, store):
+            months.append(line)
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -256,7 +324,12 @@ def write_workbooks(store: Store, output_dir: Path, user: str | None = None) -> 
     target_dir = workbook_dir(output_dir, user)
 
     report = target_dir / "taipower_bills_17.xlsx"
-    if not save_tables(report, {"Bills": (REPORT_COLUMNS, [report_row(page, output_dir) for page in submitted])}):
+    tables = {
+        "Bills": (REPORT_COLUMNS, [report_row(page, output_dir) for page in submitted]),
+        # Each bill per site and calendar month, split by days.
+        "Monthly": (MONTHLY_COLUMNS, monthly_rows(submitted, store, output_dir)),
+    }
+    if not save_tables(report, tables):
         locked.append(report.name)
 
     sheets = empty_sheets()

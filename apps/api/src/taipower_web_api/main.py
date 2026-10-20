@@ -29,6 +29,7 @@ from taipower_bill_ocr.excel_export import (
 from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
 
 from . import documents, evidence
+from .reports import month_shares
 from .reports import (
     WorkbookWriter,
     archive_evidence,
@@ -40,7 +41,7 @@ from .reports import (
     workbook_dir,
 )
 from .settings import KEYWORD_SETTINGS, OCR_BACKENDS, RESTART_REQUIRED, WORKBOOK_MODES, Settings
-from .store import Store, now
+from .store import Store, meter_number, now
 from .worker import OcrWorker, usage_marks_for
 
 TEXT_COLUMNS = {"Billing Period 計費期間", "Custom No. 電號"}
@@ -80,6 +81,20 @@ class ItemUpdate(BaseModel):
     # Warnings the reviewer kept; the others were cleared by hand.
     issues: list[dict[str, Any]] | None = None
     mark_notes: list[str] | None = None
+    # The site chosen by hand; null goes back to the one its 電號 belongs to.
+    site_id: int | None = None
+
+
+class Site(BaseModel):
+    id: int | None = None
+    name: str
+    code: str | None = None
+    note: str | None = None
+    meters: list[str] = []
+
+
+class SitesUpdate(BaseModel):
+    sites: list[Site]
 
 
 class Preferences(BaseModel):
@@ -304,6 +319,41 @@ def create_app(
             deleted.append(page_id)
         return {"deleted": deleted, "hidden": hidden}
 
+    # ----------------------------------------------------------------- sites
+    @app.get("/api/sites")
+    def sites() -> list[dict[str, Any]]:
+        return store.sites()
+
+    @app.put("/api/sites")
+    def save_sites(update: SitesUpdate, request: Request) -> list[dict[str, Any]]:
+        """Replace the site list; like the settings, only on the server's PC."""
+        if not is_local(request):
+            raise HTTPException(403, "sites can only be changed on the computer running the server")
+        names: set[str] = set()
+        owner: dict[str, str] = {}
+        cleaned = []
+        for site in update.sites:
+            name = site.name.strip()
+            if not name:
+                raise HTTPException(400, "every site needs a name")
+            if name in names:
+                raise HTTPException(400, f"two sites are called {name}")
+            names.add(name)
+            meters = []
+            for value in site.meters:
+                number = meter_number(value)
+                if not number:
+                    continue
+                if number in owner and owner[number] != name:
+                    raise HTTPException(400, f"電號 {number} is in both {owner[number]} and {name}")
+                if number not in meters:
+                    meters.append(number)
+                owner[number] = name
+            cleaned.append({"id": site.id, "name": name, "code": (site.code or "").strip(), "note": (site.note or "").strip(), "meters": meters})
+        store.replace_sites(cleaned)
+        writer.write_all()  # the Monthly sheet names each bill's site
+        return store.sites()
+
     # ----------------------------------------------------------- preferences
     def tags_of(user: str) -> dict[str, Any]:
         tags = store.preference(user, "mark_tags")
@@ -352,6 +402,7 @@ def create_app(
                 "customer_number": row.get("Custom No. 電號"),
                 "total": row.get("應繳總金額"),
                 "kind": page.get("kind") or documents.TAIPOWER,
+                "site": (store.site_of(page) or {}).get("name"),
                 "submitted_at": page["submitted_at"],
             })
         return result
@@ -376,6 +427,9 @@ def create_app(
             "colors": {"highlight": settings.highlight_color, "label": settings.label_color},
             "kind": page.get("kind") or documents.TAIPOWER,
             "sources": page.get("sources") or {},
+            "site": store.site_of(page),
+            # The bill per calendar month (split by days), as saved.
+            "months": month_shares(page),
             "pages": [
                 {
                     "page": shown["page_number"],
@@ -423,6 +477,10 @@ def create_app(
             values["row"] = row
         if update.mark_notes is not None:
             values["mark_notes"] = [note for note in page["mark_notes"] or [] if note in set(update.mark_notes)]
+        if "site_id" in update.model_fields_set:
+            if update.site_id is not None and not any(site["id"] == update.site_id for site in store.sites()):
+                raise HTTPException(400, "unknown site")
+            values["site_id"] = update.site_id
         if update.sources is not None:
             sources = dict(page.get("sources") or {})
             for column, source in update.sources.items():
@@ -567,7 +625,7 @@ def create_app(
     def export(user: str) -> Response:
         pages = list(store.pages(user=_clean_user(user), bills_only=True, visible_only=True))
         return Response(
-            export_workbook(pages),
+            export_workbook(pages, store),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers=_attachment("taipower_bills_mine.xlsx"),
         )

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { SitesEditor } from "./SitesEditor";
 import type { KeywordSetting, SettingsValues, SettingsView } from "../types";
 
 const ENV_NAMES: Record<keyof SettingsValues, string> = {
@@ -236,6 +237,15 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
               Default keywords (company names are kept)
             </button>
           )}
+        </section>
+
+        <section>
+          <h4>Sites</h4>
+          <span className="hint">
+            Each site and its meters (電號). A bill is placed in the site its 電號 belongs to (00-12-3456-78-9 and 00123456789 are the same);
+            documents without one are placed by hand on the review page. The Excel files&apos; Monthly sheet lists each bill per site and month.
+          </span>
+          <SitesEditor canEdit={view.can_edit} />
         </section>
 
         <section>

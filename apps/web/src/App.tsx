@@ -47,6 +47,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [output, setOutput] = useState<OutputInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsVersion, setSettingsVersion] = useState(0);
   const [colors, setColors] = useState<MarkColors | null>(null);
   const loadColors = useCallback(() => {
     api.settings()
@@ -221,6 +222,7 @@ export default function App() {
               onNext={nextToReview}
               onNotify={setToast}
               colors={colors}
+              settingsVersion={settingsVersion}
             />
           ) : (
             <div className="welcome">
@@ -230,7 +232,17 @@ export default function App() {
           )}
         </main>
       </div>
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} onSaved={() => { loadOutput(); loadColors(); }} />}
+      {showSettings && (
+        <SettingsDialog
+          onClose={() => {
+            setShowSettings(false);
+            // Sites may have changed: bills show their site again.
+            setSettingsVersion((version) => version + 1);
+            void refresh();
+          }}
+          onSaved={() => { loadOutput(); loadColors(); }}
+        />
+      )}
       {toast && (
         <div className="toast" role="status" onClick={() => setToast(null)}>
           {toast}

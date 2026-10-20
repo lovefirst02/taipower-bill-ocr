@@ -157,7 +157,9 @@ export function BillList({ items, selectedId, onSelect, onDelete }: BillListProp
                   {item.filename}{item.page ? ` · p${item.page}` : ""}
                   {item.kind === "other" && <span className="kind-badge" title="Not a Taipower bill: values found by keyword or filled in by hand">other</span>}
                 </span>
-                <span className="meta">{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}</span>
+                <span className="meta">
+                  {item.site ? `${item.site} · ` : ""}{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}
+                </span>
               </span>
               <button
                 className="icon remove"

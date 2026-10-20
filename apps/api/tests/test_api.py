@@ -782,6 +782,62 @@ class ApiTests(unittest.TestCase):
         reset = self.client.put("/api/preferences", json={"user": "Amy", "mark_tags": None}).json()
         self.assertEqual(reset["mark_tags"], defaults["mark_tags"])
 
+    def save_sites(self, sites):
+        return self.local_client().put("/api/sites", json={"sites": sites})
+
+    def test_sites_are_set_on_the_server_pc_and_meters_compared_by_digits(self):
+        self.assertEqual(self.client.put("/api/sites", json={"sites": []}).status_code, 403)
+        saved = self.save_sites([
+            {"name": "台北總部", "code": "TW-HQ", "meters": ["00-12-3456-78-9", "00123456789", " 10512918917 "]},
+            {"name": "新竹廠", "meters": ["10518691508"]},
+        ]).json()
+        self.assertEqual([(site["name"], site["meters"]) for site in saved],
+                         [("台北總部", ["00123456789", "10512918917"]), ("新竹廠", ["10518691508"])])
+        clash = self.save_sites([{"name": "A", "meters": ["1"]}, {"name": "B", "meters": ["1"]}])
+        self.assertEqual(clash.status_code, 400)
+        self.assertEqual(self.save_sites([{"name": "A"}, {"name": "A"}]).status_code, 400)
+
+    def test_a_bill_belongs_to_the_site_of_its_meter_unless_chosen_by_hand(self):
+        sites = self.save_sites([{"name": "台北總部", "meters": ["00-12-3456-78-9"]}, {"name": "新竹廠", "meters": []}]).json()
+        hq, plant = (site["id"] for site in sites)
+        self.upload("Amy", "jan.png")
+        item = self.first_item("Amy")
+        self.assertEqual(item["site"], "台北總部")
+        detail = self.client.get(f"/api/items/{item['id']}").json()
+        self.assertEqual((detail["site"]["name"], detail["site"]["how"]), ("台北總部", "meter"))
+        moved = self.client.put(f"/api/items/{item['id']}", json={"user": "Amy", "site_id": plant}).json()
+        self.assertEqual((moved["site"]["name"], moved["site"]["how"]), ("新竹廠", "manual"))
+        back = self.client.put(f"/api/items/{item['id']}", json={"user": "Amy", "site_id": None}).json()
+        self.assertEqual(back["site"]["name"], "台北總部")
+        # Saving other things leaves the choice alone; removing the site clears it.
+        self.client.put(f"/api/items/{item['id']}", json={"user": "Amy", "site_id": plant})
+        self.client.put(f"/api/items/{item['id']}", json={"user": "Amy", "row": {"基本電費": 700000}})
+        self.assertEqual(self.client.get(f"/api/items/{item['id']}").json()["site"]["name"], "新竹廠")
+        self.save_sites([{"id": hq, "name": "台北總部", "meters": ["00123456789"]}])
+        self.assertEqual(self.client.get(f"/api/items/{item['id']}").json()["site"]["how"], "meter")
+        self.assertEqual(self.client.put(f"/api/items/{item['id']}", json={"user": "Amy", "site_id": 999}).status_code, 400)
+
+    def test_monthly_sheet_splits_each_bill_by_days(self):
+        self.save_sites([{"name": "台北總部", "code": "TW-HQ", "meters": ["00123456789"]}])
+        bill = official_sample_bill()
+        bill["user_info"]["billing_period"] = {"start": "113/12/15", "end": "114/01/14"}
+        bill["energy_saving_info"] = None
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, page: bill):
+            self.upload("Amy", "jan.png")
+        detail = self.client.get(f"/api/items/{self.first_item('Amy')['id']}").json()
+        self.assertEqual([(month["月份"], month["天數"]) for month in detail["months"]], [("2024-12", 17), ("2025-01", 14)])
+        self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy"})
+
+        sheet = load_workbook(self.settings.report_workbook)["Monthly"]
+        header = [cell.value for cell in sheet[1]]
+        rows = [dict(zip(header, line)) for line in sheet.iter_rows(min_row=2, values_only=True)]
+        self.assertEqual([(row["據點"], row["據點代碼"], row["電號"], row["月份"], row["天數"]) for row in rows],
+                         [("台北總部", "TW-HQ", "00123456789", "2024-12", 17), ("台北總部", "TW-HQ", "00123456789", "2025-01", 14)])
+        # The parts add up to the bill exactly.
+        self.assertEqual(sum(row["應繳總金額"] for row in rows), 800000)
+        self.assertEqual(sum(row["用電度數"] for row in rows), 8000 + 3000 + 3000 + 1000)
+        self.assertEqual(sum(row["稅前應繳總金額"] for row in rows), 761905)
+
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)

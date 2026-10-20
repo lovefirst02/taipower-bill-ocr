@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS pages (
 );
 CREATE INDEX IF NOT EXISTS pages_upload ON pages(upload_id);
 CREATE INDEX IF NOT EXISTS uploads_user ON uploads(user);
+CREATE TABLE IF NOT EXISTS sites (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    code TEXT,                       -- e.g. the site's code in Intelex
+    note TEXT
+);
+CREATE TABLE IF NOT EXISTS meters (
+    customer_number TEXT PRIMARY KEY, -- 電號, digits only
+    site_id INTEGER NOT NULL REFERENCES sites(id)
+);
 CREATE TABLE IF NOT EXISTS preferences (
     user TEXT NOT NULL,
     key TEXT NOT NULL,               -- e.g. mark_tags: the user's own evidence tags
@@ -68,6 +78,12 @@ _JSON_COLUMNS = {
     "dataset_json": "dataset",
     "sources_json": "sources",
 }
+
+
+def meter_number(value: Any) -> str | None:
+    """A 電號 as digits only: 00-12-3456-78-9 and 00123456789 are the same meter."""
+    digits = "".join(char for char in str(value or "") if char.isdigit())
+    return digits or None
 
 
 def now() -> str:
@@ -104,6 +120,7 @@ class Store:
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(pages)")}
         for name, definition in (
             ("hidden", "INTEGER NOT NULL DEFAULT 0"), ("evidence_file", "TEXT"), ("kind", "TEXT"), ("sources_json", "TEXT"),
+            ("site_id", "INTEGER"),  # chosen by hand; otherwise found from the 電號
         ):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
@@ -150,6 +167,64 @@ class Store:
     def set_upload(self, upload_id: int, **values: Any) -> None:
         assignments = ", ".join(f"{key} = :{key}" for key in values)
         self._execute(f"UPDATE uploads SET {assignments} WHERE id = :id", {**values, "id": upload_id})
+
+    # ------------------------------------------------------------------ sites
+    def sites(self) -> list[dict[str, Any]]:
+        """Every site with its meters (電號), by name."""
+        sites = [dict(row) for row in self._query("SELECT * FROM sites ORDER BY name")]
+        meters: dict[int, list[str]] = {}
+        for row in self._query("SELECT customer_number, site_id FROM meters ORDER BY customer_number"):
+            meters.setdefault(row["site_id"], []).append(row["customer_number"])
+        for site in sites:
+            site["meters"] = meters.get(site["id"], [])
+        return sites
+
+    def replace_sites(self, sites: list[dict[str, Any]]) -> None:
+        """Save the whole site list at once (as edited in the settings).
+
+        Sites keep their id, so bills placed in a site by hand stay there;
+        a removed site's bills go back to being found by their 電號.
+        """
+        with self._lock:
+            db = self._db
+            existing = {row[0] for row in db.execute("SELECT id FROM sites")}
+            kept = {site["id"] for site in sites if site.get("id") in existing}
+            for removed in existing - kept:
+                db.execute("UPDATE pages SET site_id = NULL WHERE site_id = ?", (removed,))
+                db.execute("DELETE FROM sites WHERE id = ?", (removed,))
+            db.execute("DELETE FROM meters")
+            # Free the names first: two sites may swap names in one save.
+            for site_id in kept:
+                db.execute("UPDATE sites SET name = ? WHERE id = ?", (f"__renaming_{site_id}", site_id))
+            for site in sites:
+                values = (site["name"], site.get("code") or None, site.get("note") or None)
+                if site.get("id") in kept:
+                    db.execute("UPDATE sites SET name = ?, code = ?, note = ? WHERE id = ?", (*values, site["id"]))
+                    site_id = site["id"]
+                else:
+                    site_id = db.execute("INSERT INTO sites (name, code, note) VALUES (?, ?, ?)", values).lastrowid
+                for number in site.get("meters") or []:
+                    db.execute("INSERT INTO meters (customer_number, site_id) VALUES (?, ?)", (number, site_id))
+            db.commit()
+
+    def site_of(self, page: dict[str, Any]) -> dict[str, Any] | None:
+        """The page's site: chosen by hand, else the one its 電號 belongs to.
+
+        The result says which (``how``: "manual" or "meter").
+        """
+        if page.get("site_id"):
+            rows = self._query("SELECT * FROM sites WHERE id = ?", (page["site_id"],))
+            if rows:
+                return {**dict(rows[0]), "how": "manual"}
+        number = meter_number((page.get("row") or {}).get("Custom No. 電號"))
+        if number:
+            rows = self._query(
+                "SELECT sites.* FROM meters JOIN sites ON sites.id = meters.site_id WHERE meters.customer_number = ?",
+                (number,),
+            )
+            if rows:
+                return {**dict(rows[0]), "how": "meter"}
+        return None
 
     # ------------------------------------------------------------ preferences
     def preference(self, user: str, key: str) -> Any:

@@ -66,7 +66,32 @@ export interface ItemSummary {
   customer_number: string | null;
   total: number | null;
   kind: DocumentKind;
+  site: string | null;
   submitted_at: string | null;
+}
+
+export interface Site {
+  id: number;
+  name: string;
+  code: string | null;
+  note: string | null;
+  /** 電號, digits only. */
+  meters: string[];
+}
+
+/** A bill's site: chosen by hand, or the one its 電號 belongs to. */
+export interface ItemSite extends Site {
+  how: "manual" | "meter";
+}
+
+/** A bill's share of one calendar month (split by days). */
+export interface MonthShare {
+  月份: string;
+  天數: number;
+  用電度數: number | null;
+  轉供度數: number | null;
+  稅前應繳總金額: number | null;
+  應繳總金額: number | null;
 }
 
 /** A Taipower bill, or another document (e.g. a landlord's allocation). */
@@ -110,6 +135,8 @@ export interface Item {
   colors: MarkColors;
   kind: DocumentKind;
   sources: Record<string, ValueSource>;
+  site: ItemSite | null;
+  months: MonthShare[];
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];
