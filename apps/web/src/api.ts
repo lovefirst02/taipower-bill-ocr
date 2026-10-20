@@ -1,4 +1,4 @@
-import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, EnergyMix, Entity } from "./types";
+import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsSaved, SettingsValues, SettingsView, Site, Upload, ValueSource, BudgetRow, Contract, EnergyMix, Entity } from "./types";
 
 type Sources = Record<string, ValueSource>;
 /** Warnings the reviewer kept (the others were cleared). */
@@ -23,7 +23,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let detail = response.statusText;
     try {
-      detail = (await response.json()).detail ?? detail;
+      const found = (await response.json()).detail;
+      // A list of problems (e.g. a budget file's rows) is shown one per line.
+      detail = typeof found === "string" ? found : found?.errors ? found.errors.join("\n") : found ? JSON.stringify(found) : detail;
     } catch {
       // not JSON; keep the status text
     }
@@ -41,6 +43,15 @@ export const api = {
   columns: () => request<Column[]>("/api/columns"),
   settings: () => request<SettingsView>("/api/settings"),
   dashboard: (submittedOnly: boolean) => request<EnergyMix>(`/api/dashboard?submitted_only=${submittedOnly}`),
+  budget: () => request<{ rows: BudgetRow[]; can_edit: boolean }>("/api/budget"),
+  budgetTemplateUrl: (year: number) => `/api/budget/template.xlsx?year=${year}`,
+  importBudget: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ imported: number; months: string[] }>("/api/budget/import", { method: "POST", body: form });
+  },
+  contracts: () => request<Contract[]>("/api/contracts"),
+  saveContracts: (contracts: Contract[]) => request<Contract[]>("/api/contracts", { method: "PUT", ...json({ contracts }) }),
   saveSettings: (values: SettingsValues) => request<SettingsSaved>("/api/settings", { method: "PUT", ...json({ values }) }),
   browseFolder: () => request<{ folder: string | null }>("/api/settings/browse", { method: "POST" }),
   output: (user: string) => request<OutputInfo>(`/api/output?user=${encodeURIComponent(user)}`),

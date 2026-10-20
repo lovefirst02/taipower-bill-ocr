@@ -1254,6 +1254,58 @@ class ApiTests(unittest.TestCase):
                          (93219 + 5000, 5000, 5000, 0))
         self.assertEqual(meter["retailer_service"], "1-11311-08-00502")
 
+    def test_budget_is_imported_from_the_template_and_green_costs_estimated_from_contracts(self):
+        local = self.local_client()
+        entities = local.put("/api/entities", json={"entities": [{"name": "ASML TW21", "code": "TW21"}]}).json()
+        tw21 = entities[0]["id"]
+        self.save_sites([{"name": "彰化廠", "entity_id": tw21, "meters": ["05785193319"]}, {"name": "台北辦公室", "meters": []}])
+        saved = local.put("/api/contracts", json={"contracts": [
+            {"entity_id": tw21, "energy": "太陽光電", "price": 5.6, "transfer_rate": 0.3051, "certificate_rate": 0.0026, "start_month": "2026-01"},
+            {"energy": "風力", "price": 5.8, "transfer_rate": 0.3052, "start_month": "2026-01", "end_month": "2026-12"},
+        ]}).json()
+        self.assertEqual(sorted(contract["energy"] for contract in saved), ["太陽能", "風力"])
+        self.assertEqual(self.client.put("/api/contracts", json={"contracts": []}).status_code, 403)
+        self.assertEqual(local.put("/api/contracts", json={"contracts": [{"energy": "風力", "price": 580}]}).status_code, 400)
+
+        template = load_workbook(io.BytesIO(self.client.get("/api/budget/template.xlsx", params={"year": 2026}).content))
+        sheet = template["Budget"]
+        header = [cell.value for cell in sheet[1]]
+        self.assertEqual(header[:3], ["月份", "Entity", "Site"])
+        self.assertEqual(sheet.max_row, 1 + 12 * 2)  # every month for both sites
+        first = [cell.value for cell in sheet[2]]
+        self.assertEqual(first[:3], ["2026-01", None, "台北辦公室"])  # sites by name
+        column = {name: index + 1 for index, name in enumerate(header)}
+        for row in range(2, sheet.max_row + 1):
+            if sheet.cell(row, column["Site"]).value == "彰化廠" and sheet.cell(row, column["月份"]).value == "2026-08":
+                sheet.cell(row, column["灰電度數"]).value = 460000
+                sheet.cell(row, column["灰電費用（稅前）"]).value = "2,530,000"
+                sheet.cell(row, column["太陽能度數"]).value = 575000  # cost left empty: from the contract
+                sheet.cell(row, column["風力度數"]).value = 196000
+                sheet.cell(row, column["風力費用（未稅）"]).value = 1350000
+        buffer = io.BytesIO()
+        template.save(buffer)
+        upload = {"file": ("budget_2026.xlsx", buffer.getvalue(), "application/octet-stream")}
+        self.assertEqual(self.client.post("/api/budget/import", files=upload).status_code, 403)
+        imported = local.post("/api/budget/import", files=upload).json()
+        self.assertEqual((imported["imported"], imported["months"]), (1, ["2026-08"]))
+        rows = self.client.get("/api/budget").json()["rows"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual((row["entity"], row["site"], row["grey_cost"]), ("ASML TW21", "彰化廠", 2530000))
+        self.assertEqual((row["solar_cost"], row["estimated"]), (round(575000 * (5.6 + 0.3051 + 0.0026)), ["solar_cost"]))
+        self.assertEqual(row["total_kwh"], 460000 + 575000 + 196000)
+        self.assertEqual(row["total_cost"], 2530000 + row["solar_cost"] + 1350000)
+
+        # A wrong site name is pointed out and nothing is imported.
+        sheet.cell(2, column["Site"]).value = "不存在"
+        sheet.cell(2, column["灰電度數"]).value = 1
+        buffer = io.BytesIO()
+        template.save(buffer)
+        response = local.post("/api/budget/import", files={"file": ("b.xlsx", buffer.getvalue(), "application/octet-stream")})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("不存在", response.json()["detail"]["errors"][0])
+        self.assertEqual(len(self.client.get("/api/budget").json()["rows"]), 1)
+
     def test_green_services_setting_needs_an_energy(self):
         response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})
         self.assertEqual(response.status_code, 400)

@@ -28,7 +28,7 @@ from taipower_bill_ocr.excel_export import (
 
 from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
 
-from . import documents, evidence, green, mix
+from . import budget, documents, evidence, green, mix
 from .reports import month_shares
 from .reports import (
     WorkbookWriter,
@@ -112,6 +112,23 @@ class Entity(BaseModel):
 
 class EntitiesUpdate(BaseModel):
     entities: list[Entity]
+
+
+class Contract(BaseModel):
+    entity_id: int | None = None
+    energy: str
+    retailer: str | None = None
+    service: str | None = None
+    price: float
+    transfer_rate: float = 0
+    certificate_rate: float = 0
+    start_month: str | None = None
+    end_month: str | None = None
+    note: str | None = None
+
+
+class ContractsUpdate(BaseModel):
+    contracts: list[Contract]
 
 
 class SitesUpdate(BaseModel):
@@ -389,6 +406,69 @@ def create_app(
         store.replace_sites(cleaned)
         writer.write_all()  # the Monthly sheet names each bill's site
         return store.sites()
+
+    # ---------------------------------------------------------------- budget
+    @app.get("/api/budget")
+    def budgets(request: Request) -> dict[str, Any]:
+        """The budgets as compared with the actuals (green costs left empty estimated from the contracts)."""
+        return {"rows": budget.with_estimates(store.budgets(), store), "can_edit": is_local(request)}
+
+    @app.get("/api/budget/template.xlsx")
+    def budget_template(year: int) -> Response:
+        if not 2000 <= year <= 2100:
+            raise HTTPException(400, "year out of range")
+        return Response(
+            budget.template_workbook(store, year, store.budgets()),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=_attachment(f"budget_{year}.xlsx"),
+        )
+
+    @app.post("/api/budget/import")
+    async def import_budget(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+        """A filled-in template: the months it has are replaced. Like the settings, only on the server's PC."""
+        if not is_local(request):
+            raise HTTPException(403, "the budget can only be changed on the computer running the server")
+        rows, errors = budget.read_workbook(await file.read(), store)
+        if errors:
+            raise HTTPException(400, {"errors": errors[:50]})
+        store.replace_budgets(rows)
+        return {"imported": len(rows), "months": sorted({row["month"] for row in rows})}
+
+    @app.delete("/api/budget")
+    def clear_budget(request: Request, year: str | None = None) -> dict[str, Any]:
+        if not is_local(request):
+            raise HTTPException(403, "the budget can only be changed on the computer running the server")
+        store.clear_budgets(year)
+        return {"cleared": year or "all"}
+
+    @app.get("/api/contracts")
+    def contracts() -> list[dict[str, Any]]:
+        return store.contracts()
+
+    @app.put("/api/contracts")
+    def save_contracts(update: ContractsUpdate, request: Request) -> list[dict[str, Any]]:
+        """Green power contracts: each energy's price for an entity and a span of months."""
+        if not is_local(request):
+            raise HTTPException(403, "contracts can only be changed on the computer running the server")
+        entity_ids = {entity["id"] for entity in store.entities()}
+        cleaned = []
+        for number, contract in enumerate(update.contracts, start=1):
+            if contract.entity_id is not None and contract.entity_id not in entity_ids:
+                raise HTTPException(400, f"contract {number}: unknown entity")
+            if not contract.energy.strip():
+                raise HTTPException(400, f"contract {number}: the energy is required")
+            if not 0 < contract.price < 100:
+                raise HTTPException(400, f"contract {number}: the price is NT$ per kWh (e.g. 5.8)")
+            months = [contract.start_month, contract.end_month]
+            for month in months:
+                if month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+                    raise HTTPException(400, f"contract {number}: months look like 2026-01")
+            if all(months) and months[0] > months[1]:
+                raise HTTPException(400, f"contract {number}: it ends before it starts")
+            cleaned.append({**contract.model_dump(), "energy": mix.energy_name(contract.energy),
+                            "start_month": contract.start_month or None, "end_month": contract.end_month or None})
+        store.replace_contracts(cleaned)
+        return store.contracts()
 
     # -------------------------------------------------------------- entities
     @app.get("/api/entities")

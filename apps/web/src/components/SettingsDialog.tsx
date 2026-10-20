@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { ContractsEditor } from "./ContractsEditor";
 import { EntitiesEditor } from "./EntitiesEditor";
 import { SitesEditor } from "./SitesEditor";
 import type { Entity, KeywordSetting, SettingsValues, SettingsView } from "../types";
@@ -292,6 +293,15 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
             file name or text, or chosen on the review page.
           </span>
           <EntitiesEditor canEdit={view.can_edit} onSaved={setEntities} />
+        </section>
+
+        <section>
+          <h4>Green power contracts</h4>
+          <span className="hint">
+            Each energy&apos;s contract price (before tax), and the fees the retailer charges on top per kWh (Taipower&apos;s transfer fees,
+            certificates; 0 when the price includes them). A budget with green kWh but no green cost is estimated as kWh × the total.
+          </span>
+          <ContractsEditor canEdit={view.can_edit} entities={entities} />
         </section>
 
         <section>

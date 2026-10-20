@@ -601,6 +601,16 @@ npm test           # 前端與後端測試
   `GreenPower`（售電明細每列依月份拆分）、`TransferList`（台電清單每列，含是否為本公司電號）、
   `GreenCheck`（各電號三方核對）、`GreenServices`（通知單 vs 台電清單）。綠電單據不會列入 `Bills` 與 `Monthly`。
 
+### 預算 vs 實際
+
+- **預算（Excel 匯入）**：Dashboard 的「Budget vs actual」按「Budget template 2026」下載範本，每月 × Site（含 Entity）一列，
+  填灰電度數與費用、太陽能度數與費用、風力度數與費用；總用電與總費用留空會自動加總。在執行伺服器的電腦按「Import budget…」匯入，
+  檔案中的月份整月取代，Site 名稱對不上時列出錯誤、整份不匯入。
+- **綠電合約單價**（Settings → Green power contracts）：每份合約設定 Entity（或全部）、能源別、合約單價（未稅），以及另外照實際收的
+  每度轉供費率與憑證費率、起訖月份。預算只填綠電度數、費用留空時，以度數 × (合約價 + 轉供費率 + 憑證費率) 推估，畫面以 * 標示。
+- **比較**：可選總費用、總用電、灰電／太陽能／風力的費用或度數，依月份、Site 或 Entity 分組，顯示預算、實際、差異與差異 %
+  （超支紅色）；也套用上方的年份、Entity、Site 篩選。尚無單據的月份顯示「no documents yet」，合計只比較已有單據的月份，並另列全年預算。
+
 ### Entity（集團內的公司）
 
 「Settings」→「Entities」設定集團內各公司（名稱、檔名上的代碼如 `TW21`、統一編號），每個 Site 選擇所屬的 Entity：

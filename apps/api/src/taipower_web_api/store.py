@@ -67,6 +67,26 @@ CREATE TABLE IF NOT EXISTS meters (
     customer_number TEXT PRIMARY KEY, -- 電號, digits only
     site_id INTEGER NOT NULL REFERENCES sites(id)
 );
+CREATE TABLE IF NOT EXISTS budgets (
+    month TEXT NOT NULL,             -- YYYY-MM
+    entity TEXT,                     -- names as in the settings
+    site TEXT NOT NULL,
+    values_json TEXT NOT NULL,       -- grey_kwh, grey_cost, solar_kwh, ... (None when not budgeted)
+    PRIMARY KEY (month, site)
+);
+CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY,
+    entity_id INTEGER,               -- NULL: every entity
+    energy TEXT NOT NULL,            -- 太陽能, 風力, ...
+    retailer TEXT,
+    service TEXT,
+    price REAL NOT NULL,             -- NT$/kWh before tax, as in the contract
+    transfer_rate REAL NOT NULL DEFAULT 0,     -- Taipower's transfer fees charged on top, NT$/kWh
+    certificate_rate REAL NOT NULL DEFAULT 0,  -- certificate fees on top, NT$/kWh
+    start_month TEXT,                -- YYYY-MM; NULL: open
+    end_month TEXT,
+    note TEXT
+);
 CREATE TABLE IF NOT EXISTS preferences (
     user TEXT NOT NULL,
     key TEXT NOT NULL,               -- e.g. mark_tags: the user's own evidence tags
@@ -296,6 +316,43 @@ class Store:
         entities = {entity["id"]: entity for entity in self.entities()}
         rows = self._query("SELECT meters.customer_number, sites.entity_id FROM meters JOIN sites ON sites.id = meters.site_id")
         return {row["customer_number"]: entities[row["entity_id"]] for row in rows if row["entity_id"] in entities}
+
+    # ---------------------------------------------------------------- budgets
+    def budgets(self) -> list[dict[str, Any]]:
+        rows = self._query("SELECT * FROM budgets ORDER BY month, entity, site")
+        return [{"month": row["month"], "entity": row["entity"], "site": row["site"], **json.loads(row["values_json"])} for row in rows]
+
+    def replace_budgets(self, rows: list[dict[str, Any]]) -> None:
+        """An import replaces the budget of the months it has (other months stay)."""
+        with self._lock:
+            db = self._db
+            for month in {row["month"] for row in rows}:
+                db.execute("DELETE FROM budgets WHERE month = ?", (month,))
+            for row in rows:
+                values = {key: value for key, value in row.items() if key not in ("month", "entity", "site")}
+                db.execute("INSERT OR REPLACE INTO budgets (month, entity, site, values_json) VALUES (?, ?, ?, ?)",
+                           (row["month"], row.get("entity"), row["site"], json.dumps(values, ensure_ascii=False)))
+            db.commit()
+
+    def clear_budgets(self, year: str | None = None) -> None:
+        self._execute("DELETE FROM budgets WHERE ? IS NULL OR month LIKE ?", (year, f"{year}-%"))
+
+    # -------------------------------------------------------------- contracts
+    def contracts(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._query("SELECT * FROM contracts ORDER BY energy, start_month, id")]
+
+    def replace_contracts(self, contracts: list[dict[str, Any]]) -> None:
+        with self._lock:
+            db = self._db
+            db.execute("DELETE FROM contracts")
+            for contract in contracts:
+                db.execute(
+                    "INSERT INTO contracts (entity_id, energy, retailer, service, price, transfer_rate, certificate_rate, start_month, end_month, note) "
+                    "VALUES (:entity_id, :energy, :retailer, :service, :price, :transfer_rate, :certificate_rate, :start_month, :end_month, :note)",
+                    {key: contract.get(key) for key in ("entity_id", "energy", "retailer", "service", "price", "transfer_rate",
+                                                        "certificate_rate", "start_month", "end_month", "note")},
+                )
+            db.commit()
 
     # ------------------------------------------------------------ preferences
     def preference(self, user: str, key: str) -> Any:

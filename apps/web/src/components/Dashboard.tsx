@@ -3,6 +3,7 @@ import { api } from "../api";
 import { energies, energyPrice, greenShare, groupBy, total, unitPrice, SOLAR, UNCLASSIFIED, WIND } from "../mix";
 import type { MixTotal } from "../mix";
 import type { EnergyMix, MixDocument, MixRow } from "../types";
+import { BudgetSection } from "./BudgetSection";
 
 const GREY = "#9aa0a6";
 const COLORS: Record<string, string> = { [SOLAR]: "#f2a900", [WIND]: "#1a9bb5", [UNCLASSIFIED]: "#9ccc65" };
@@ -89,6 +90,8 @@ export function Dashboard({ onOpenSettings }: { onOpenSettings: () => void }) {
             <Kpi label="Grey cost (before tax)" value={sum.with_bill ? money(sum.grey_cost) : "—"} note={`${price(unitPrice(sum.grey_cost_priced, sum.grey_kwh_costed))} NT$/kWh`} />
             <Kpi label="Green cost (untaxed)" value={money(sum.green_cost)} note={`${price(unitPrice(sum.green_cost_priced, sum.green_kwh_costed))} NT$/kWh`} />
           </div>
+
+          <BudgetSection actuals={rows} year={year} entity={entity} site={site} />
 
           <section className="dash-card">
             <h3>kWh per month</h3>

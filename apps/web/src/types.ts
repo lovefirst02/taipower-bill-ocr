@@ -342,6 +342,40 @@ export interface MixDocument {
   unit_price?: number | null;
 }
 
+/** A month's budget for a site (green costs left empty are estimated from the contracts). */
+export interface BudgetRow {
+  month: string;
+  entity: string | null;
+  site: string;
+  grey_kwh: number | null;
+  grey_cost: number | null;
+  solar_kwh: number | null;
+  solar_cost: number | null;
+  wind_kwh: number | null;
+  wind_cost: number | null;
+  total_kwh: number | null;
+  total_cost: number | null;
+  /** Fields estimated from a contract price, e.g. ["solar_cost"]. */
+  estimated: string[];
+}
+
+/** A green power contract: an energy's price for an entity over a span of months. */
+export interface Contract {
+  id?: number;
+  entity_id: number | null;
+  energy: string;
+  retailer: string | null;
+  service: string | null;
+  /** NT$ per kWh before tax. */
+  price: number;
+  /** Taipower's transfer fees and certificate fees charged on top, NT$ per kWh. */
+  transfer_rate: number;
+  certificate_rate: number;
+  start_month: string | null;
+  end_month: string | null;
+  note: string | null;
+}
+
 export interface EnergyMix {
   rows: MixRow[];
   documents: MixDocument[];
