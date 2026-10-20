@@ -129,6 +129,50 @@ def read_statement(lines: Iterable[Line]) -> Statement | None:
     return statement if statement is not None and statement.lines else None
 
 
+# Charges printed outside the table: the untaxed total is the lines plus
+# the fees; tax on top gives the total due.
+CHARGES: dict[str, tuple[str, ...]] = {
+    "fee": ("交易手續費", "手續費"),
+    "tax": ("稅額", "營業稅"),
+    "total": ("Total", "總計", "應繳總額", "應付總額", "本期應繳"),
+}
+
+
+def statement_charges(lines: Iterable[Line]) -> dict[str, tuple[Any, tuple[float, float, float, float], int | None]]:
+    """The fees, tax and total beside the table: (value, box, page) by name.
+
+    Each value is the nearest number right of its label, else below it.
+    """
+    lines = [line for line in lines if line.text.strip()]
+    found: dict[str, tuple[Any, tuple[float, float, float, float], int | None]] = {}
+    for name, words in CHARGES.items():
+        for label in sorted(lines, key=lambda line: (line.page or 0, line.y)):
+            flat = tables.normal(label.text)
+            if not any(tables.normal(word) in flat for word in words) or sum(char.isdigit() for char in flat) > 2:
+                continue
+            right_edge = label.x + label.width
+            best = None
+            for line in lines:
+                if line is label or line.page != label.page:
+                    continue
+                value = tables.number(line.text, integer=True)
+                if not isinstance(value, int):
+                    continue
+                centre = line.x + line.width / 2
+                if abs(line.middle - label.middle) < max(label.height, line.height) * 0.7 and line.x >= right_edge - 5:
+                    distance = line.x - right_edge
+                elif 0 < line.y - label.y < label.height * 6 and abs(centre - (label.x + label.width / 2)) < max(label.width * 4, 300):
+                    distance = (line.y - label.y) * 3 + 1000
+                else:
+                    continue
+                if best is None or distance < best[0]:
+                    best = (distance, value, line)
+            if best is not None:
+                found[name] = (best[1], best[2].box, label.page)
+                break
+    return found
+
+
 def statement_period(lines: Iterable[Line]) -> str | None:
     """The statement's period: a range of dates, else a month (e.g. 113年01月 → the whole month)."""
     from .keyword_extract import parse_period

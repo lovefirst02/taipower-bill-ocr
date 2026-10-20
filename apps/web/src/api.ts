@@ -13,6 +13,7 @@ type Kept = {
     lines?: Record<string, string | number | null | undefined>[];
     rows?: Record<string, string | number | null | undefined>[];
     values?: Record<string, string | number | null | undefined>;
+    charges?: Record<string, string | number | null | undefined>;
   };
 };
 type Tags = { mark_tags: string[]; defaults: string[] };

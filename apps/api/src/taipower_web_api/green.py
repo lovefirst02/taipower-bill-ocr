@@ -22,7 +22,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 from taipower_bill_ocr.excel_export import COLUMNS
-from taipower_bill_ocr.green_statement import check_line, is_green, read_statement, statement_period
+from taipower_bill_ocr.green_statement import CHARGES, check_line, is_green, read_statement, statement_charges, statement_period
 from taipower_bill_ocr.keyword_extract import lines_from_dataset
 from taipower_bill_ocr.periods import parse_period, split_by_month
 from taipower_bill_ocr.purchase_notice import FIELDS as NOTICE_FIELDS
@@ -170,9 +170,13 @@ def _read(lines: list, all_lines: list, page: dict[str, Any], group: list[dict[s
             if name in notice.boxes:
                 marks += _tag(_highlight_and_label(label, _pad(notice.boxes[name]), size, taken, []), f"green.{name}")
         return statement, marks
-    table = read_statement([line for other in group for line in lines_from_dataset(other["dataset"], other["page_number"])])
+    group_lines = [line for other in group for line in lines_from_dataset(other["dataset"], other["page_number"])]
+    table = read_statement(group_lines)
     if table is not None:
-        statement = {"type": STATEMENT, "period": statement_period(all_lines), "lines": [line.as_json() for line in table.lines]}
+        # Fees outside the table (交易手續費), the tax and the total due.
+        charges = {name: value for name, (value, _box, _page) in statement_charges(group_lines).items()}
+        statement = {"type": STATEMENT, "period": statement_period(all_lines), "lines": [line.as_json() for line in table.lines],
+                     "charges": charges}
         # The kWh and charge columns marked on each page of the table.
         marks = []
         for other in group:
@@ -228,6 +232,10 @@ def issues_of(statement: Mapping[str, Any], settings: Settings) -> list[dict[str
     if not statement.get("period"):
         issues.append({"zh": f"找不到{name}的期間，請填寫", "en": "Period not found — enter it", "columns": ["Billing Period 計費期間"]})
     if kind == STATEMENT:
+        added = charges_check(statement)
+        if added["status"] == "check":
+            issues.append({"zh": f"明細合計（本月電費＋手續費＋稅額）與 Total 相差 {added['difference']} 元",
+                           "en": f"Lines + fees + tax differ from the total by {added['difference']} NT$", "columns": []})
         for index, line in enumerate(checked_lines(statement, settings.green_tolerance), start=1):
             check = line["check"]
             if check["status"] == "check":
@@ -293,6 +301,8 @@ def update(page: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any
                     item[kept] = line[kept]
             lines.append(item)
         result["lines"] = lines
+        given = (payload.get("charges") if "charges" in payload else current.get("charges")) or {}
+        result["charges"] = {name: _number(given.get(name), whole=True) for name in CHARGES if given.get(name) not in (None, "")}
     elif kind == TRANSFER_LIST:
         rows = []
         for row in payload.get("rows") or []:
@@ -375,7 +385,8 @@ def reconcile(store: Store) -> dict[str, Any]:
         if key not in meters:
             site = store.site_of({"row": {"Custom No. 電號": meter}}) or {}
             meters[key] = {"month": month, "period": period, "meter": meter, "site": site.get("name"), "services": set(),
-                           "taipower_list_kwh": None, "taipower_list_fees": None, "retailer_kwh": None, "documents": []}
+                           "taipower_list_kwh": None, "taipower_list_fees": None, "retailer_kwh": None, "documents": [],
+                           "list_by_service": {}}
         return meters[key]
 
     for page in documents:
@@ -398,6 +409,8 @@ def reconcile(store: Store) -> dict[str, Any]:
                 if pair not in seen and row.get("kwh") is not None:
                     seen.add(pair)
                     entry["taipower_list_kwh"] = (entry["taipower_list_kwh"] or 0) + row["kwh"]
+                    by_service = entry["list_by_service"]
+                    by_service[statement.get("service")] = by_service.get(statement.get("service"), 0) + row["kwh"]
                 if row.get("fee") is not None:
                     entry["taipower_list_fees"] = (entry["taipower_list_fees"] or 0) + row["fee"]
                 service = services.setdefault((month, statement.get("service")), _service(month, statement.get("service")))
@@ -425,10 +438,21 @@ def reconcile(store: Store) -> dict[str, Any]:
     for entry in sorted(meters.values(), key=lambda item: (item["month"], item["meter"])):
         bill_kwh, how, bills = _bill_kwh(store, entry["meter"], entry["period"])
         reference = entry["taipower_list_kwh"]
+        # A meter may get power under several services (solar and wind):
+        # the retailer's statement is compared with the service it is for,
+        # the one whose kWh is nearest; the bill with all of them.
+        by_service = entry.pop("list_by_service")
+        retailer_service = None
+        retailer_reference = reference
+        if entry["retailer_kwh"] is not None and len(by_service) > 1:
+            retailer_service = min(by_service, key=lambda service: abs(by_service[service] - entry["retailer_kwh"]))
+            retailer_reference = by_service[retailer_service]
         entry.update(
             services=sorted(service for service in entry["services"] if service),
             bill_kwh=bill_kwh, bill_how=how, bills=bills,
-            retailer_difference=None if reference is None or entry["retailer_kwh"] is None else entry["retailer_kwh"] - reference,
+            list_by_service=[{"service": service, "kwh": kwh} for service, kwh in sorted(by_service.items(), key=lambda item: str(item[0]))],
+            retailer_service=retailer_service, retailer_list_kwh=retailer_reference,
+            retailer_difference=None if retailer_reference is None or entry["retailer_kwh"] is None else entry["retailer_kwh"] - retailer_reference,
             bill_difference=None if reference is None or bill_kwh is None else _plain(Decimal(str(bill_kwh)) - Decimal(str(reference))),
             # Without Taipower's list, the retailer's kWh can still be held against the bill.
             retailer_bill_difference=None if entry["retailer_kwh"] is None or bill_kwh is None else _plain(Decimal(str(entry["retailer_kwh"])) - Decimal(str(bill_kwh))),
@@ -499,7 +523,8 @@ def view(store: Store, page: Mapping[str, Any], settings: Settings) -> dict[str,
     if kind == STATEMENT:
         lines = checked_lines(statement, settings.green_tolerance)
         result.update(lines=lines, total_kwh=sum(line.get("kwh") or 0 for line in lines if line["green"]),
-                      total_cost=sum(line.get("cost") or 0 for line in lines))
+                      total_cost=total_cost(page), charges=statement.get("charges") or {},
+                      charges_check=charges_check(statement))
     elif kind == TRANSFER_LIST:
         rows = checked_rows(statement, company_meters(store))
         result.update(rows=rows, total_fees=sum(row.get("fee") or 0 for row in rows if row["ours"]))
@@ -510,11 +535,24 @@ def view(store: Store, page: Mapping[str, Any], settings: Settings) -> dict[str,
     return result
 
 
+def charges_check(statement: Mapping[str, Any]) -> dict[str, Any]:
+    """A statement's lines + fees + tax against its printed total."""
+    charges = statement.get("charges") or {}
+    untaxed = sum(line.get("cost") or 0 for line in statement.get("lines") or []) + (charges.get("fee") or 0)
+    if charges.get("total") is None or charges.get("tax") is None:
+        return {"untaxed": untaxed, "expected": None, "difference": None, "status": "incomplete"}
+    expected = untaxed + charges["tax"]
+    difference = charges["total"] - expected
+    return {"untaxed": untaxed, "expected": expected, "difference": difference, "status": "ok" if difference == 0 else "check"}
+
+
 def total_cost(page: Mapping[str, Any]) -> Any:
+    """What the document costs before tax (a statement's lines with its fees)."""
     statement = page.get("green") or {}
     kind = type_of(statement)
     if kind == STATEMENT:
-        return sum(line.get("cost") or 0 for line in statement.get("lines") or [])
+        fee = (statement.get("charges") or {}).get("fee") or 0
+        return sum(line.get("cost") or 0 for line in statement.get("lines") or []) + fee
     if kind == NOTICE:
         return (statement.get("values") or {}).get("untaxed")
     return sum(row.get("fee") or 0 for row in statement.get("rows") or [])
@@ -567,6 +605,9 @@ def green_rows(pages: Iterable[Mapping[str, Any]], store: Store, tolerance: floa
                                  "轉供費率": line.get("transfer_rate"), "憑證費率": line.get("certificate_rate"),
                                  "差額": check.get("difference"), "核對": STATUS[check["status"]]},
                                 {"轉供度數": line.get("kwh"), "金額": line.get("cost"), "計算金額": check.get("expected")}))
+            fee = (statement.get("charges") or {}).get("fee")
+            if fee:
+                entries.append(({"能源別": "交易手續費"}, {"金額": fee}))
         elif kind == NOTICE:
             values = statement.get("values") or {}
             checks = check_notice(values)

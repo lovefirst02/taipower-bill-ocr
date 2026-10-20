@@ -311,3 +311,4 @@ main { flex: 1; min-width: 0; display: flex; }
 .dash-table td.warn-text { color: var(--warn); white-space: normal; min-width: 200px; }
 .site-row.entity-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1fr) auto; }
 .site-row select { font: inherit; font-size: 12px; padding: 3px 4px; min-width: 0; width: 100%; }
+.charges { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border); }

@@ -1206,6 +1206,49 @@ class ApiTests(unittest.TestCase):
         moved = self.client.put(f"/api/items/{other['id']}", json={"user": "Amy", "entity_id": tw21}).json()
         self.assertEqual(moved["entity"]["how"], "manual")
 
+    def test_a_statements_fees_count_and_its_total_is_checked(self):
+        page = green_statement()  # lines: 2,447,198 NT$
+        page.ocr_lines += [
+            OcrLine("交易手續費", 1300, 800, 150, 34, None), OcrLine("12", 1700, 800, 30, 34, None),
+            OcrLine("稅額", 1300, 860, 60, 34, None), OcrLine("122,361", 1650, 860, 110, 34, None),
+            OcrLine("Total", 1500, 950, 80, 40, None), OcrLine("2,569,571", 1400, 1010, 200, 50, None),
+            OcrLine("計費期間：113/01/01~113/01/31", 40, 150, 400, 34, None),
+        ]
+        detail = self.upload_as("wind.png", page)
+        green_view = detail["green"]
+        self.assertEqual(green_view["charges"], {"fee": 12, "tax": 122361, "total": 2569571})
+        self.assertEqual((green_view["charges_check"]["status"], green_view["total_cost"]), ("ok", 2447198 + 12))
+        self.assertEqual(self.first_item("Amy")["total"], 2447210)
+        mix = self.client.get("/api/dashboard").json()
+        self.assertEqual(round(sum(row["green_cost"] or 0 for row in mix["rows"]), 2), 2447210)
+        # A wrong total is pointed out; edits keep the charges.
+        saved = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {
+            "period": "113/01/01~113/01/31", "lines": green_view["lines"], "charges": {"fee": "12", "tax": "122,361", "total": "2,569,000"}}}).json()
+        self.assertEqual(saved["green"]["charges_check"]["difference"], -571)
+        self.assertTrue(any("Total" in issue["zh"] for issue in saved["issues"]))
+
+    def test_a_retailer_is_compared_with_its_own_service_on_a_shared_meter(self):
+        """One meter gets solar and wind: the wind statement is held against the wind list only."""
+        self.save_sites([{"name": "總廠", "meters": ["05785193319"]}])
+        self.upload_as("solar list.png", transfer_list())  # 05785193319: 93,219 kWh (solar)
+        wind = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+        wind.ocr_lines = [
+            OcrLine("費用清單", 848, 145, 300, 92, None), OcrLine("服務編號：1-11311-08-00502", 67, 295, 700, 59, None),
+            OcrLine("2026年08月", 1658, 300, 180, 42, None), OcrLine("轉供輸電費清單", 67, 380, 260, 44, None), *list_header(457),
+            *ocr_table(549, [("1", "05785193319", "KU20021670", "08376141004", "TI19701899", "5,000", "0.0778", "389")]),
+        ]
+        self.upload_as("wind list.png", wind)
+        statement = green_statement()
+        statement.ocr_lines = [line for line in statement.ocr_lines if line.y < 300] + [
+            OcrLine(text, x, 320, len(text) * 18, 34, None)
+            for text, x in zip(("05785193319", "風能", "5.8000", "0.30520", "0.00000", "6.1052", "5,000", "30,526"), (125, 455, 640, 838, 1052, 1288, 1505, 1722))]
+        statement.ocr_lines.append(OcrLine("計費期間：115/08/01~115/08/31", 40, 150, 400, 34, None))
+        detail = self.upload_as("wind.png", statement)
+        meter = detail["green"]["comparisons"]["meters"][0]
+        self.assertEqual((meter["taipower_list_kwh"], meter["retailer_kwh"], meter["retailer_list_kwh"], meter["retailer_difference"]),
+                         (93219 + 5000, 5000, 5000, 0))
+        self.assertEqual(meter["retailer_service"], "1-11311-08-00502")
+
     def test_green_services_setting_needs_an_energy(self):
         response = self.local_client().put("/api/settings", json={"values": {"green_services": "1-11210-08-00210"}})
         self.assertEqual(response.status_code, 400)

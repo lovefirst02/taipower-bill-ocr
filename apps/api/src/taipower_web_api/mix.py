@@ -184,6 +184,7 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 entry(month, row["user_meter"])["list"][energy] += kwh
                 list_kwh[(month, statement.get("service"))][row["user_meter"]] += kwh
         elif kind == green.STATEMENT:
+            kwh_by_meter: dict[str, Decimal] = defaultdict(Decimal)
             for line in statement.get("lines") or []:
                 meter = line.get("meter")
                 if not meter or (ours and meter not in ours):
@@ -191,7 +192,17 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
                 target = entry(month, meter)
                 if is_green(line) and _number(line.get("kwh")) is not None:
                     target["statement"][energy_name(line.get("energy"))] += _number(line["kwh"])
+                    kwh_by_meter[meter] += _number(line["kwh"])
                 add(target, "green_cost", _number(line.get("cost")))
+            # Fees outside the table (交易手續費), shared by kWh.
+            fee = _number((statement.get("charges") or {}).get("fee"))
+            if fee and sum(kwh_by_meter.values()):
+                whole = sum(kwh_by_meter.values())
+                shares = {meter: (fee * kwh / whole).quantize(Decimal("0.01")) for meter, kwh in kwh_by_meter.items()}
+                largest = max(shares, key=lambda meter: kwh_by_meter[meter])
+                shares[largest] += fee - sum(shares.values())
+                for meter, share in shares.items():
+                    add(entry(month, meter), "green_cost", share)
 
     # A retailer's notice is for one company of the group: its cost is that
     # company's kWh in Taipower's list × the notice's price (untaxed ÷ B),
@@ -314,7 +325,8 @@ def _ledger_entry(page: Mapping[str, Any], ours: set[str], duplicate_of: Mapping
         entry.update(type=kind, period=statement.get("period"), service=statement.get("service"))
         if kind == green.STATEMENT:
             lines = [line for line in statement.get("lines") or [] if line.get("meter") and (not ours or line["meter"] in ours)]
-            entry.update(kwh=_sum(line.get("kwh") for line in lines if is_green(line)), cost=_sum(line.get("cost") for line in lines),
+            fee = (statement.get("charges") or {}).get("fee")
+            entry.update(kwh=_sum(line.get("kwh") for line in lines if is_green(line)), cost=_sum([*(line.get("cost") for line in lines), fee]),
                          surcharge=_sum(line.get("cost") for line in lines if not is_green(line)), counted="cost")
         elif kind == green.TRANSFER_LIST:
             rows = [row for row in statement.get("rows") or [] if row.get("user_meter") and (not ours or row["user_meter"] in ours)]

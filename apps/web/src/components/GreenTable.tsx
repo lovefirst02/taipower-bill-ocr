@@ -10,6 +10,7 @@ export interface GreenDraft {
   lines?: Record<string, Cell>[];
   rows?: Record<string, Cell>[];
   values?: Record<string, Cell>;
+  charges?: Record<string, Cell>;
 }
 
 /** The draft to edit for a document as the server sent it. */
@@ -24,6 +25,7 @@ export function draftOf(view: GreenView): GreenDraft {
     lines: view.lines?.map((line) => strip(line as unknown as Record<string, unknown>)),
     rows: view.rows?.map((row) => strip(row as unknown as Record<string, unknown>)),
     values: view.values ? { ...view.values } : undefined,
+    charges: view.charges ? { ...view.charges } : view.type === "statement" ? {} : undefined,
   };
 }
 
@@ -138,11 +140,47 @@ function StatementLines({ view, draft, editable, onChange }: Omit<Props, "ourMet
           + Line
         </button>
       )}
+      <Charges draft={draft} editable={editable} linesCost={totalCost} onChange={onChange} />
       <p className="hint">
         The statement&apos;s 本月電費 are what is reported. The retailer adds Taipower&apos;s transfer fees, each rounded row by row,
         so a few NT$ from kWh × rates is normal; the printed 每度單價 is only 本月電費 ÷ kWh.
       </p>
     </>
+  );
+}
+
+/** Fees outside the table, the tax and the total due: lines + fees + tax must make the total. */
+function Charges({ draft, editable, linesCost, onChange }: { draft: GreenDraft; editable: boolean; linesCost: number; onChange: (draft: GreenDraft) => void }) {
+  const charges = draft.charges ?? {};
+  const fee = cellNumber(charges.fee) ?? 0;
+  const tax = cellNumber(charges.tax);
+  const total = cellNumber(charges.total);
+  const untaxed = Math.round((linesCost + fee) * 100) / 100;
+  const difference = tax !== null && total !== null ? Math.round((total - untaxed - tax) * 100) / 100 : null;
+  const field = (name: string, label: string) => (
+    <label className="notice-field">
+      <span>{label}</span>
+      <input className="num" value={charges[name] ?? ""} readOnly={!editable} inputMode="decimal"
+        onChange={(event) => onChange({ ...draft, charges: { ...charges, [name]: event.target.value } })} />
+    </label>
+  );
+  return (
+    <div className="charges">
+      <div className="notice-grid">
+        {field("fee", "交易手續費 (fees)")}
+        {field("tax", "稅額 (tax)")}
+        {field("total", "Total 應繳總額")}
+        <div className="notice-field">
+          <span>未稅合計 = 本月電費 + 手續費</span>
+          <strong className="num">{format(untaxed)}</strong>
+          {difference !== null && (
+            <small className={`diff ${difference === 0 ? "ok" : "check"}`}>
+              {difference === 0 ? "✓ + 稅額 = Total" : `⚠ + 稅額 differs from Total by ${difference.toLocaleString()}`}
+            </small>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -382,8 +420,14 @@ function MeterTable({ meters }: { meters: MeterComparison[] }) {
             <td>{entry.month}</td>
             <td>{entry.meter}</td>
             <td>{entry.site ?? "—"}</td>
-            <td className="num">{format(entry.taipower_list_kwh)}</td>
-            <td className="num">{format(entry.retailer_kwh)}</td>
+            <td className="num" title={(entry.list_by_service ?? []).map((item) => `${item.service ?? "?"}: ${format(item.kwh)}`).join(", ")}>
+              {format(entry.taipower_list_kwh)}
+              {(entry.list_by_service ?? []).length > 1 && <small className="sections"><br />{(entry.list_by_service ?? []).length} services</small>}
+            </td>
+            <td className="num" title={entry.retailer_service ? `Compared with service ${entry.retailer_service}: ${format(entry.retailer_list_kwh)} kWh` : undefined}>
+              {format(entry.retailer_kwh)}
+              {entry.retailer_service && <small className="sections"><br />vs {format(entry.retailer_list_kwh)} ({entry.retailer_service})</small>}
+            </td>
             <td className="num">{difference(entry.retailer_difference)}</td>
             <td className="num" title={entry.bills.map((bill) => `${bill.filename} ${bill.period ?? ""}`).join(", ")}>
               {entry.bill_kwh === null ? HOW[entry.bill_how] : `${format(entry.bill_kwh)}${HOW[entry.bill_how]}`}

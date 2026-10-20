@@ -1,6 +1,6 @@
 import unittest
 
-from taipower_bill_ocr.green_statement import check_line, is_green, read_statement, statement_period
+from taipower_bill_ocr.green_statement import check_line, is_green, read_statement, statement_charges, statement_period
 from taipower_bill_ocr.keyword_extract import Line
 
 # The retailer's table as OCR reads it (a statement shared by the user;
@@ -56,6 +56,23 @@ class ReadStatementTests(unittest.TestCase):
 
     def test_a_page_without_the_table_is_not_a_statement(self):
         self.assertIsNone(read_statement([Line("電費分攤明細表", 100, 100, 300, 40, 1), Line("轉供度數", 100, 200, 120, 30, 1)]))
+
+
+class ChargesTests(unittest.TestCase):
+    def test_fees_tax_and_total_beside_the_table_are_read(self):
+        # As on a retailer's second page: labels with the amount on their right,
+        # and the total under its label in a box.
+        lines = [
+            Line("交易手續費", 700, 380, 120, 24, 2), Line("12", 930, 380, 20, 24, 2),
+            Line("稅額", 760, 412, 50, 24, 2), Line("67,580", 890, 412, 60, 24, 2),
+            Line("轉供度數以「台灣電力股份有限公司繳費通知單」代輸電力度數為準。", 20, 520, 500, 22, 2),
+            Line("Total", 870, 590, 70, 30, 2), Line("1,419,171", 655, 640, 200, 50, 2),
+        ]
+        found = {name: value for name, (value, _box, _page) in statement_charges(lines).items()}
+        self.assertEqual(found, {"fee": 12, "tax": 67580, "total": 1419171})
+
+    def test_no_charges_without_labels(self):
+        self.assertEqual(statement_charges([Line("10512918917", 0, 0, 100, 20)]), {})
 
 
 class CheckLineTests(unittest.TestCase):

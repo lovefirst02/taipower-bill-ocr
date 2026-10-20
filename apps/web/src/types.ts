@@ -154,6 +154,11 @@ export interface MeterComparison {
   taipower_list_kwh: number | null;
   taipower_list_fees: number | null;
   retailer_kwh: number | null;
+  /** The meter's kWh per service on Taipower's lists (solar and wind may share a meter). */
+  list_by_service?: { service: string | null; kwh: number }[];
+  /** The service the retailer is compared with, when the meter has several. */
+  retailer_service?: string | null;
+  retailer_list_kwh?: number | null;
   retailer_difference: number | null;
   bill_kwh: number | null;
   bill_difference: number | null;
@@ -187,6 +192,8 @@ export interface GreenView {
   service: string | null;
   tolerance: number;
   lines?: GreenLine[];
+  /** A statement's fees outside the table (交易手續費), tax and total due. */
+  charges?: { fee?: number | null; tax?: number | null; total?: number | null };
   total_kwh?: number;
   total_cost?: number | null;
   rows?: TransferRowView[];
