@@ -1322,6 +1322,17 @@ class ApiTests(unittest.TestCase):
         response = self.client.post("/api/uploads", data={"user": "Amy", "site_id": "999"}, files=[("files", ("b.png", png_bytes(), "image/png"))])
         self.assertEqual(response.status_code, 400)
 
+    def test_files_uploaded_as_green_power_are_never_taipower_bills(self):
+        self.local_client().put("/api/entities", json={"entities": [{"name": "ASML TW21", "code": "TW21"}]})
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, number: official_sample_bill()):
+            self.client.post("/api/uploads", data={"user": "Amy", "kind": "green"}, files=[("files", ("x(TW21).png", png_bytes(), "image/png"))])
+            self.app.state.worker.wait_idle(10)
+        item = self.first_item("Amy")
+        self.assertNotEqual(item["kind"], "taipower")  # read for green power, else another document
+        self.assertEqual(item["entity"], "ASML TW21")
+        self.assertEqual(self.client.post("/api/uploads", data={"user": "Amy", "kind": "bill"},
+                                          files=[("files", ("y.png", png_bytes(), "image/png"))]).status_code, 400)
+
     def test_a_green_document_is_placed_in_the_site_of_its_meters(self):
         self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}, {"name": "台中廠", "meters": ["06156256254"]}])
         self.upload_as("list.png", transfer_list())  # meters of both sites

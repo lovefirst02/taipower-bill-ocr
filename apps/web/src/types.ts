@@ -67,6 +67,8 @@ export interface ItemSummary {
   total: number | null;
   kind: DocumentKind;
   green_type?: GreenType | null;
+  /** The company of the group (a retailer's notice names it). */
+  entity?: string | null;
   site: string | null;
   submitted_at: string | null;
 }

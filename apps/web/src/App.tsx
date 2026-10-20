@@ -145,11 +145,11 @@ export default function App() {
     }
   };
 
-  const upload = async (files: File[], siteId: number | null) => {
+  const upload = async (files: File[], target: number | "green" | null) => {
     setUploading(true);
     setNotice(null);
     try {
-      const result = await api.upload(user, files, siteId);
+      const result = await api.upload(user, files, target);
       if (result.rejected.length) {
         setNotice(`Skipped: ${result.rejected.map((file) => `${file.filename} (${file.reason})`).join(", ")}`);
       }

@@ -276,7 +276,8 @@ class OcrWorker:
         # kind of document (documents.detect).
         # Taipower's transfer fee list has Taipower's name on it too: green
         # power documents are read once the whole upload is in.
-        is_bill = event.record is not None and documents.is_taipower_bill(event.bill) and any(
+        green_upload = (self.store.upload(upload_id) or {}).get("kind") == green.GREEN
+        is_bill = not green_upload and event.record is not None and documents.is_taipower_bill(event.bill) and any(
             event.record.row.get(column) is not None
             for column in ("Billing Period 計費期間", "基本電費", "流動電費", "稅前應繳總金額", "應繳總金額")
         ) and green.page_type(lines_from_dataset(dataset, event.page_number)) is None

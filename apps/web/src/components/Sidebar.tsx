@@ -6,15 +6,15 @@ import type { ItemSummary, Site, Upload } from "../types";
 
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp";
 
-export function Dropzone({ onFiles, busy, sitesVersion }: { onFiles: (files: File[], siteId: number | null) => void; busy: boolean; sitesVersion: number }) {
+export function Dropzone({ onFiles, busy, sitesVersion }: { onFiles: (files: File[], target: number | "green" | null) => void; busy: boolean; sitesVersion: number }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
-  const [siteId, setSiteId] = useState<number | null>(null);
+  const [target, setTarget] = useState<number | "green" | null>(null);
   useEffect(() => {
     api.sites().then(setSites).catch(() => undefined);
   }, [sitesVersion]);
-  const send = (files: File[]) => onFiles(files, siteId);
+  const send = (files: File[]) => onFiles(files, target);
   const drop = (event: DragEvent) => {
     event.preventDefault();
     setOver(false);
@@ -23,15 +23,17 @@ export function Dropzone({ onFiles, busy, sitesVersion }: { onFiles: (files: Fil
   };
   return (
     <div className="upload-box">
-      {sites.length > 0 && (
-        <label className="upload-site" title="Every page of the files uploaded next is placed in this site (by 電號: each bill finds its own)">
-          Site
-          <select value={siteId ?? ""} onChange={(event) => setSiteId(event.target.value ? Number(event.target.value) : null)}>
-            <option value="">— by 電號 —</option>
-            {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-          </select>
-        </label>
-      )}
+      <label className="upload-site" title="Where the files uploaded next go: a site (every page in it), green power documents (Taipower's transfer lists, retailers' statements and notices: they cover several sites), or each bill by its 電號">
+        For
+        <select value={target ?? ""} onChange={(event) => {
+          const value = event.target.value;
+          setTarget(value === "green" ? "green" : value ? Number(value) : null);
+        }}>
+          <option value="">Bills — site by 電號</option>
+          {sites.map((site) => <option key={site.id} value={site.id}>Site: {site.name}</option>)}
+          <option value="green">綠電單據 (green power, all sites)</option>
+        </select>
+      </label>
       <div
         className={`dropzone${over ? " over" : ""}`}
         role="button"
@@ -164,7 +166,7 @@ export function BillList({ items, selectedId, onSelect, onDelete }: BillListProp
                   )}
                 </span>
                 <span className="meta">
-                  {item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}
+                  {item.kind === "green" && item.entity ? `${item.entity} · ` : ""}{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}
                 </span>
               </span>
               <button
@@ -218,12 +220,15 @@ export function BillList({ items, selectedId, onSelect, onDelete }: BillListProp
 }
 
 const NO_SITE = "No site";
-const LAST = ["Several sites", NO_SITE];
+const GREEN = "綠電 Green power";
+const LAST = [GREEN, "Several sites", NO_SITE];
 
 /** Items by site (sites by name, "No site" last), then by month (latest first); undated ones at the site's level. */
 function groupBySite(items: ItemSummary[]): [string, ItemSummary[], [string, ItemSummary[]][]][] {
   const sites = new Map<string, ItemSummary[]>();
-  for (const item of items) sites.set(item.site ?? NO_SITE, [...(sites.get(item.site ?? NO_SITE) ?? []), item]);
+  // Green power documents cover several sites (a notice names only its entity): a group of their own.
+  const groupOf = (item: ItemSummary) => (item.kind === "green" ? GREEN : item.site ?? NO_SITE);
+  for (const item of items) sites.set(groupOf(item), [...(sites.get(groupOf(item)) ?? []), item]);
   return [...sites.entries()]
     // Sites by name, then documents over several sites, then those in none.
     .sort(([a], [b]) => (LAST.indexOf(a) - LAST.indexOf(b)) || a.localeCompare(b))

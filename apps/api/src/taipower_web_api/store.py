@@ -158,8 +158,12 @@ class Store:
         if "entity_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(sites)")}:
             self._db.execute("ALTER TABLE sites ADD COLUMN entity_id INTEGER")
         # The site chosen when uploading: every page of the upload is placed in it.
-        if "site_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(uploads)")}:
+        upload_columns = {row[1] for row in self._db.execute("PRAGMA table_info(uploads)")}
+        if "site_id" not in upload_columns:
             self._db.execute("ALTER TABLE uploads ADD COLUMN site_id INTEGER")
+        # "green": uploaded as green power documents (never read as Taipower bills).
+        if "kind" not in upload_columns:
+            self._db.execute("ALTER TABLE uploads ADD COLUMN kind TEXT")
         self._db.commit()
         self._lock = threading.Lock()
 
@@ -174,10 +178,10 @@ class Store:
             return self._db.execute(sql, params).fetchall()
 
     # ---------------------------------------------------------------- uploads
-    def add_upload(self, user: str, filename: str, path: Path, sha256: str, site_id: int | None = None) -> int:
+    def add_upload(self, user: str, filename: str, path: Path, sha256: str, site_id: int | None = None, kind: str | None = None) -> int:
         cursor = self._execute(
-            "INSERT INTO uploads (user, filename, path, sha256, status, created_at, site_id) VALUES (?, ?, ?, ?, 'queued', ?, ?)",
-            (user, filename, str(path), sha256, now(), site_id),
+            "INSERT INTO uploads (user, filename, path, sha256, status, created_at, site_id, kind) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)",
+            (user, filename, str(path), sha256, now(), site_id, kind),
         )
         return int(cursor.lastrowid)
 
