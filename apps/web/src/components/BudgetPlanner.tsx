@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { EnergyPlan, Plan, PlanEnergy, SitePlan } from "../types";
+import { BudgetOverview } from "./BudgetOverview";
 
 const ENERGIES: { key: PlanEnergy; label: string }[] = [
   { key: "grey", label: "Grey 灰電" },
@@ -34,6 +35,7 @@ export function BudgetPlanner() {
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [siteName, setSiteName] = useState<string | null>(null);
   const [energy, setEnergy] = useState<PlanEnergy>("grey");
+  const [tab, setTab] = useState<"overview" | "plan">("overview");
   const file = useRef<HTMLInputElement>(null);
 
   const load = (chosen = year) => {
@@ -97,6 +99,14 @@ export function BudgetPlanner() {
         )}
       </div>
       {message && <p className={`message ${message.kind}`} style={{ whiteSpace: "pre-line" }}>{message.text}</p>}
+      <div className="segmented page-tabs">
+        <button type="button" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</button>
+        <button type="button" className={tab === "plan" ? "active" : ""} onClick={() => setTab("plan")}>Plan</button>
+      </div>
+      {tab === "overview" ? (
+        <BudgetOverview plan={plan} onOpenSite={(name) => { setSiteName(name); setTab("plan"); }} />
+      ) : (
+      <>
       {!plan.can_edit && <p className="hint">The budget can be changed on the computer running the server; here it can be viewed.</p>}
 
       <div className="kpis">
@@ -128,6 +138,8 @@ export function BudgetPlanner() {
         </div>
         <MonthsTable key={`${year}-${site.site}-${energy}-${JSON.stringify(site.energies[energy].months.map((month) => [month.kwh_source, month.kwh, month.rate_source, month.rate]))}-${site.energies[energy].adjustment_pct}`} year={year} site={site} plan={site.energies[energy]} canEdit={plan.can_edit} onSave={save} />
       </section>
+      </>
+      )}
     </div>
   );
 }

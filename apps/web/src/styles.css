@@ -366,3 +366,43 @@ main { flex: 1; min-width: 0; display: flex; }
 .plan-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; margin: 6px 0; }
 .plan-controls input.short { width: 60px; margin-left: 4px; }
 .plan-months tr.forecast td, .plan-months tr.forecast th { background: #f3f0ff; }
+/* Budget overview */
+.page-tabs { align-self: flex-start; }
+.budget-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.energy-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.energy-cards .status-badge { margin-top: 4px; align-self: flex-start; }
+.status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--text); }
+.status-badge i { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%;
+  font-style: normal; font-size: 11px; color: #fff; }
+.status-badge.on-track i { background: #0ca30c; }
+.status-badge.at-risk i { background: #fab219; color: #1f2328; }
+.status-badge.over i { background: #d03b3b; }
+.kpi strong .status-badge { font-size: 18px; }
+.kpi strong .status-badge i { width: 22px; height: 22px; font-size: 13px; }
+.budget-sites .bar-cell { width: 170px; }
+.spend-bar { position: relative; display: block; height: 10px; background: var(--bg); border-radius: 5px; }
+.spend-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: #2a78d6; border-radius: 5px; }
+.spend-bar u { position: absolute; top: -3px; bottom: -3px; border-left: 2px dashed #2a78d6; }
+.spend-bar b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); }
+.budget-sites td.over { color: var(--danger); font-weight: 600; }
+.burnup { position: relative; }
+.burnup .swatch { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; border-radius: 0; }
+.burnup .swatch.actual { border-color: #2a78d6; }
+.burnup .swatch.forecast { border-color: #2a78d6; border-top-style: dashed; }
+.burnup .swatch.planned { border-color: #8a8986; }
+.burnup .swatch.budget { border-color: var(--text); border-top-width: 1px; }
+.burnup .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.burnup .line.actual { stroke: #2a78d6; }
+.burnup .line.forecast { stroke: #2a78d6; stroke-dasharray: 6 5; }
+.burnup .line.planned { stroke: #8a8986; }
+.burnup .budget-line { stroke: var(--text); stroke-width: 1; }
+.burnup .dot.actual { fill: #2a78d6; stroke: var(--panel); stroke-width: 2; }
+.burnup .label { font-size: 11px; fill: var(--muted); }
+.burnup .hit { fill: transparent; }
+.burnup .crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.chart-tip { position: absolute; top: 28px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 2px; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12); white-space: nowrap; }
+.chart-tip small { color: var(--muted); }
+/* The page scrolls: its parts keep their height. */
+.dashboard > * { flex-shrink: 0; }
