@@ -1107,6 +1107,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(second["id"], first["id"])  # SQLite gives the id out again
         self.assertNotEqual(second["image"]["version"], first["image"]["version"])
 
+    def test_a_document_ocr_could_not_read_is_filled_in_by_hand(self):
+        """Taken for a Taipower bill (or read as nothing): the reviewer says it is Taipower's list."""
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319"]}])
+        self.upload("Amy", "list.png")  # the fake OCR reads a Taipower bill
+        item_id = self.first_item("Amy")["id"]
+        empty = self.client.post(f"/api/items/{item_id}/kind", json={"kind": "transfer_list"}).json()
+        self.assertEqual((empty["kind"], empty["green"]["type"], empty["green"]["rows"]), ("green", "transfer_list", []))
+        self.assertTrue(any("No rows read" in issue["en"] for issue in empty["issues"]))
+        rows = [{"section": "轉供輸電費清單", "user_meter": "05785193319", "generator": "08376003416", "kwh": "93,219", "rate": "0.0778", "fee": "7,252"}]
+        saved = self.client.put(f"/api/items/{item_id}", json={
+            "user": "Amy", "green": {"period": "2026/07/01~2026/07/31", "service": "1-11210-08-00210", "rows": rows}}).json()
+        row = saved["green"]["rows"][0]
+        self.assertEqual((row["kwh"], row["fee"], row["ours"], row["check"]["status"]), (93219, 7252, True, "ok"))
+        self.assertEqual(saved["green"]["comparisons"]["meters"][0]["taipower_list_kwh"], 93219)
+        self.assertEqual(self.client.post(f"/api/items/{item_id}/kind", json={"kind": "taipower"}).status_code, 400)
+
     def test_dashboard_shows_grey_and_green_power_by_energy(self):
         self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
         self.upload_as("list.png", transfer_list())

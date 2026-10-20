@@ -10,6 +10,14 @@ import type { GreenDraft } from "./GreenTable";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
 
+// What a reviewer can say a document is (a Taipower bill is only found by OCR).
+const DOCUMENT_KINDS: Record<string, string> = {
+  transfer_list: "台電轉供費用清單",
+  notice: "購電通知單",
+  statement: "售電明細",
+  other: "其他單據",
+};
+
 interface Props {
   itemId: number;
   user: string;
@@ -162,7 +170,12 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     ...(greenEdited && greenDraft ? { green: greenDraft } : {}),
   };
   const save = () => run(() => api.save(itemId, user, row, marks, sources, kept), "Draft saved");
-  const redetect = () => run(() => api.redetect(itemId), "Looked for the values again with the current keywords");
+  const redetect = () => run(() => api.redetect(itemId), "Read the document again");
+  const changeKind = (kind: string) => {
+    if (!kind) return;
+    if (!window.confirm(`Read this document as ${DOCUMENT_KINDS[kind]}? Its values and marks are replaced; when no such table is found it starts empty, to fill in by hand.`)) return;
+    void run(() => api.setKind(itemId, kind), `Now ${DOCUMENT_KINDS[kind]}`);
+  };
   const submit = async () => {
     const result = await run(() => api.submit(itemId, user, row, marks, sources, kept), "Submitted — saved to the Excel files with its evidence PDF");
     if (result && !(result.locked_workbooks ?? []).length) {
@@ -339,11 +352,18 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
           </a>
           {editable ? (
             <>
-              {item.kind === "other" && (
-                <button onClick={redetect} disabled={busy} title="Look for the values again with the keywords in Settings (replaces the values and marks)">
+              {(item.kind === "other" || item.kind === "green") && (
+                <button onClick={redetect} disabled={busy} title="Read the document again: its tables over every page, else the keywords in Settings (replaces the values and marks)">
                   Detect again
                 </button>
               )}
+              <select className="kind-picker" value="" disabled={busy} onChange={(event) => changeKind(event.target.value)}
+                title="When OCR took the document for something else, or read nothing: say what it is">
+                <option value="">Document type…</option>
+                {Object.entries(DOCUMENT_KINDS).map(([kind, name]) => (
+                  <option key={kind} value={kind} disabled={kind === (item.kind === "green" ? item.green?.type : item.kind)}>{name}</option>
+                ))}
+              </select>
               <button onClick={save} disabled={busy || !dirty}>Save draft</button>
               <button className="primary" onClick={submit} disabled={busy}>Submit</button>
             </>

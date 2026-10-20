@@ -76,6 +76,7 @@ export const api = {
   saveTags: (user: string, tags: string[] | null) =>
     request<Tags>("/api/preferences", { method: "PUT", ...json({ user, mark_tags: tags }) }),
   redetect: (id: number) => request<Item>(`/api/items/${id}/redetect`, { method: "POST" }),
+  setKind: (id: number, kind: string) => request<Item>(`/api/items/${id}/kind`, { method: "POST", ...json({ kind }) }),
   reopen: (id: number, user: string) =>
     request<Item>(`/api/items/${id}/reopen`, { method: "POST", ...json({ user }) }),
   resetMarks: (id: number) => request<Item>(`/api/items/${id}/reset-marks`, { method: "POST" }),

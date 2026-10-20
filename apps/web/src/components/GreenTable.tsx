@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cellNumber, checkLine, checkNotice, checkRow, isGreen, meterNumber } from "../green";
 import type { Cell } from "../green";
 import type { GreenView, MeterComparison, ServiceComparison } from "../types";
@@ -154,17 +155,40 @@ const ROW_COLUMNS: { key: string; label: string; numeric: boolean; width?: numbe
   { key: "fee", label: "費用", numeric: true },
 ];
 
+// Taipower's fee tables, offered when one is added by hand.
+const FEE_TABLES = ["轉供輸電費清單", "轉供配電費清單", "轉供輔助服務費清單", "轉供電力調度費清單"];
+
 function TransferRows({ draft, editable, ourMeters, onChange }: Omit<Props, "view">) {
+  const [newTable, setNewTable] = useState("");
   const rows = draft.rows ?? [];
+  const setRows = (next: Record<string, Cell>[]) => onChange({ ...draft, rows: next });
   const setCell = (index: number, key: string, value: string) =>
-    onChange({ ...draft, rows: rows.map((row, at) => (at === index ? { ...row, [key]: value } : row)) });
+    setRows(rows.map((row, at) => (at === index ? { ...row, [key]: value } : row)));
   const isOurs = (row: Record<string, Cell>) => ourMeters.size === 0 || ourMeters.has(meterNumber(row.user_meter));
   const sections = [...new Set(rows.map((row) => String(row.section ?? "")))];
   const ours = rows.filter(isOurs);
+  /** A new row at the end of a fee table, with the table's usual rate. */
+  const addRow = (section: string) => {
+    const inTable = rows.filter((row) => String(row.section ?? "") === section);
+    const rates = inTable.map((row) => String(row.rate ?? "")).filter(Boolean);
+    const usual = rates.sort((a, b) => rates.filter((rate) => rate === b).length - rates.filter((rate) => rate === a).length)[0] ?? "";
+    const last = rows.map((row) => String(row.section ?? "")).lastIndexOf(section);
+    const row: Record<string, Cell> = { section, user_meter: "", generator: inTable[inTable.length - 1]?.generator ?? "", kwh: "", rate: usual, fee: "" };
+    setRows(last < 0 ? [...rows, row] : [...rows.slice(0, last + 1), row, ...rows.slice(last + 1)]);
+  };
+  const addTable = () => {
+    const name = newTable.trim();
+    if (!name) return;
+    addRow(name);
+    setNewTable("");
+  };
   return (
     <>
       {ourMeters.size === 0 && (
         <p className="hint warn-text">No meters set in Settings → Sites: every row counts as the company&apos;s.</p>
+      )}
+      {rows.length === 0 && (
+        <p className="hint warn-text">No rows read. Add a fee table below, then its rows (one per user meter and generator).</p>
       )}
       <div className="green-scroll">
         <table>
@@ -173,11 +197,18 @@ function TransferRows({ draft, editable, ourMeters, onChange }: Omit<Props, "vie
               <th>Ours</th>
               {ROW_COLUMNS.map((column) => <th key={column.key}>{column.label}</th>)}
               <th title="Taipower's fee is exactly kWh × rate, rounded">核對</th>
+              {editable && <th aria-label="Remove" />}
             </tr>
           </thead>
           {sections.map((section) => (
             <tbody key={section}>
-              <tr className="section"><td colSpan={ROW_COLUMNS.length + 2}>{section || "—"}</td></tr>
+              <tr className="section">
+                <td colSpan={ROW_COLUMNS.length + 2}>
+                  {section || "—"}
+                  {editable && <button type="button" className="link" onClick={() => addRow(section)}>+ Row</button>}
+                </td>
+                {editable && <td />}
+              </tr>
               {rows.map((row, index) => {
                 if (String(row.section ?? "") !== section) return null;
                 const check = checkRow(row);
@@ -194,6 +225,12 @@ function TransferRows({ draft, editable, ourMeters, onChange }: Omit<Props, "vie
                     <td className={`num diff ${check.status}`} title={row.note ? String(row.note) : undefined}>
                       {mark(check.status, check.difference)}{row.note ? " ✎" : ""}
                     </td>
+                    {editable && (
+                      <td>
+                        <button type="button" className="icon" aria-label={`Remove row ${index + 1}`}
+                          onClick={() => setRows(rows.filter((_, at) => at !== index))}>✕</button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -204,13 +241,25 @@ function TransferRows({ draft, editable, ourMeters, onChange }: Omit<Props, "vie
               <td colSpan={5}>Our meters: fees in total</td>
               <td className="num">{format(ours.reduce<number>((sum, row) => sum + (cellNumber(row.fee) ?? 0), 0))}</td>
               <td />
+              {editable && <td />}
             </tr>
           </tfoot>
         </table>
       </div>
+      {editable && (
+        <div className="add-table">
+          <input list="fee-tables" value={newTable} placeholder="Fee table, e.g. 轉供輸電費清單"
+            onChange={(event) => setNewTable(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addTable(); } }} />
+          <datalist id="fee-tables">
+            {FEE_TABLES.filter((name) => !sections.includes(name)).map((name) => <option key={name} value={name} />)}
+          </datalist>
+          <button type="button" onClick={addTable} disabled={!newTable.trim()}>+ Fee table</button>
+        </div>
+      )}
       <p className="hint">
         Taipower&apos;s transferred kWh are the reference for green power; its fees are kWh × rate rounded, so each row must match
-        exactly. ✎: a misread value was put right (hover for why).
+        exactly. ✎: a value was put right or not read (hover for why). Rows OCR missed can be added with + Row.
       </p>
     </>
   );

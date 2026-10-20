@@ -72,6 +72,10 @@ class Mark(BaseModel):
     field: str | None = None
 
 
+class KindChange(BaseModel):
+    kind: str
+
+
 class ItemUpdate(BaseModel):
     user: str
     row: dict[str, Any] | None = None
@@ -601,6 +605,26 @@ def create_app(
             raise HTTPException(409, "already submitted; reopen it to edit")
         # Read again: a green power statement's table, else keywords.
         store.update_page(page_id, **(green.detect(store, page, settings) or documents.detect(store, page, settings)))
+        return item(page_id)
+
+    @app.post("/api/items/{page_id}/kind")
+    def set_kind(page_id: int, change: KindChange) -> dict[str, Any]:
+        """The reviewer says what the document is: read it as that, or start it empty.
+
+        For when OCR took it for something else, or found no table at all.
+        Replaces the values and marks. A Taipower bill is only found by OCR
+        (upload it again).
+        """
+        page = page_or_404(page_id)
+        if page["status"] == "submitted":
+            raise HTTPException(409, "already submitted; reopen it to edit")
+        if change.kind == documents.OTHER:
+            found = documents.detect(store, page, settings)
+        elif change.kind in (green.STATEMENT, green.NOTICE, green.TRANSFER_LIST):
+            found = green.detect_as(store, page, settings, change.kind)
+        else:
+            raise HTTPException(400, "kind must be other, statement, notice or transfer_list")
+        store.update_page(page_id, **found)
         return item(page_id)
 
     @app.get("/api/items/{page_id}/evidence.png")

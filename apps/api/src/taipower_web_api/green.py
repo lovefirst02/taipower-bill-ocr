@@ -122,6 +122,27 @@ def detect(store: Store, first: dict[str, Any], settings: Settings) -> dict[str,
     return None
 
 
+def blank(kind: str, first: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """An empty green power document of a type, to fill in by hand (OCR found none)."""
+    statement: dict[str, Any] = {"type": kind, "period": None}
+    if kind in (NOTICE, TRANSFER_LIST):
+        statement["service"] = None
+    statement.update({STATEMENT: {"lines": []}, NOTICE: {"values": {}, "boxes": {}}, TRANSFER_LIST: {"rows": []}}[kind])
+    row: dict[str, Any] = {column: None for column in COLUMNS}
+    row.update({"來源檔案": first["filename"], "頁碼": first["page_number"]})
+    return {
+        "kind": GREEN, "is_bill": True, "row": row, "ocr_row": dict(row), "green": statement,
+        "issues": issues_of(statement, settings), "marks": [], "mark_notes": [],
+        "sources": {}, "alternatives": {}, "locations": {},
+    }
+
+
+def detect_as(store: Store, first: dict[str, Any], settings: Settings, kind: str) -> dict[str, Any]:
+    """The document read as the type the reviewer chose; empty when OCR finds no such table."""
+    found = detect(store, first, settings)
+    return found if found is not None and type_of(found["green"]) == kind else blank(kind, first, settings)
+
+
 def _read(lines: list, all_lines: list, page: dict[str, Any], group: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
     size = (page["image_width"], page["image_height"])
     taken = [(line["x"], line["y"], line["width"], line["height"]) for line in page["dataset"].get("ocr_lines") or []]
@@ -224,7 +245,9 @@ def issues_of(statement: Mapping[str, Any], settings: Settings) -> list[dict[str
                 issues.append({"zh": f"第 {index} 列（{row.get('section')}，電號 {row.get('user_meter')}）費用與度數×費率不符",
                                "en": f"Row {index} ({row.get('section')}, meter {row.get('user_meter')}): fee is not kWh × rate", "columns": []})
             if row.get("note"):
-                issues.append({"zh": f"第 {index} 列已自動更正：{row['note']}", "en": f"Row {index} corrected: {row['note']}", "columns": []})
+                issues.append({"zh": f"第 {index} 列：{row['note']}", "en": f"Row {index}: {row['note']}", "columns": []})
+        if not statement.get("rows"):
+            issues.append({"zh": "沒有讀到任何列，請手動新增", "en": "No rows read — add them by hand", "columns": []})
     else:
         if not statement.get("service"):
             issues.append({"zh": "找不到服務編號", "en": "Service number not found — enter it", "columns": []})

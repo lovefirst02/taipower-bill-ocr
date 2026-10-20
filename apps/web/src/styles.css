@@ -303,3 +303,6 @@ main { flex: 1; min-width: 0; display: flex; }
 .dash-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .dash-table tr.total td { font-weight: 600; border-top: 1px solid var(--border); }
 .topbar-actions button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.green-table tr.section button.link { margin-left: 10px; font-size: 12px; }
+.add-table { display: flex; gap: 6px; margin-top: 6px; }
+.add-table input { flex: 1; max-width: 260px; padding: 3px 6px; }
