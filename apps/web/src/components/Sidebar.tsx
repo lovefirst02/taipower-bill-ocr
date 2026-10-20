@@ -1,64 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { DragEvent } from "react";
-import { api } from "../api";
 import { periodMonth } from "../periods";
-import type { ItemSummary, Site, Upload } from "../types";
+import type { ItemSummary, Upload } from "../types";
 
-const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp";
-
-export function Dropzone({ onFiles, busy, sitesVersion }: { onFiles: (files: File[], target: number | "green" | null) => void; busy: boolean; sitesVersion: number }) {
-  const input = useRef<HTMLInputElement>(null);
+/** Opens the upload dialog; files dropped here start in it. */
+export function Dropzone({ onOpen, busy }: { onOpen: (files: File[]) => void; busy: boolean }) {
   const [over, setOver] = useState(false);
-  const [sites, setSites] = useState<Site[]>([]);
-  const [target, setTarget] = useState<number | "green" | null>(null);
-  useEffect(() => {
-    api.sites().then(setSites).catch(() => undefined);
-  }, [sitesVersion]);
-  const send = (files: File[]) => onFiles(files, target);
   const drop = (event: DragEvent) => {
     event.preventDefault();
     setOver(false);
-    const files = Array.from(event.dataTransfer.files);
-    if (files.length) send(files);
+    onOpen(Array.from(event.dataTransfer.files));
   };
   return (
-    <div className="upload-box">
-      <label className="upload-site" title="Where the files uploaded next go: a site (every page in it), green power documents (Taipower's transfer lists, retailers' statements and notices: they cover several sites), or each bill by its 電號">
-        For
-        <select value={target ?? ""} onChange={(event) => {
-          const value = event.target.value;
-          setTarget(value === "green" ? "green" : value ? Number(value) : null);
-        }}>
-          <option value="">Bills — site by 電號</option>
-          {sites.map((site) => <option key={site.id} value={site.id}>Site: {site.name}</option>)}
-          <option value="green">綠電單據 (green power, all sites)</option>
-        </select>
-      </label>
-      <div
-        className={`dropzone${over ? " over" : ""}`}
-        role="button"
-        tabIndex={0}
-        onClick={() => input.current?.click()}
-        onKeyDown={(event) => (event.key === "Enter" || event.key === " ") && input.current?.click()}
-        onDragOver={(event) => { event.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={drop}
-      >
-        <strong>{busy ? "Uploading…" : "Drop bills here"}</strong>
-        <span>or click to choose · PDF, PNG, JPG · many at once</span>
-        <input
-          ref={input}
-          type="file"
-          multiple
-          accept={ACCEPT}
-          hidden
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            event.target.value = "";
-            if (files.length) send(files);
-          }}
-        />
-      </div>
+    <div
+      className={`dropzone${over ? " over" : ""}`}
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen([])}
+      onKeyDown={(event) => (event.key === "Enter" || event.key === " ") && onOpen([])}
+      onDragOver={(event) => { event.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={drop}
+    >
+      <strong>{busy ? "Uploading…" : "＋ Upload files"}</strong>
+      <span>Taipower bills, a site&apos;s documents or green power documents</span>
     </div>
   );
 }

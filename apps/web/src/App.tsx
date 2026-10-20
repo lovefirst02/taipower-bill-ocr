@@ -3,8 +3,10 @@ import { api } from "./api";
 import { Dashboard } from "./components/Dashboard";
 import { Review } from "./components/Review";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { UploadDialog } from "./components/UploadDialog";
+import type { UploadTarget } from "./components/UploadDialog";
 import { BillList, Dropzone, UploadQueue } from "./components/Sidebar";
-import type { Column, ItemSummary, MarkColors, OutputInfo, Upload } from "./types";
+import type { Column, ItemSummary, MarkColors, OutputInfo, Site, Upload } from "./types";
 
 const USER_KEY = "taipower-user";
 
@@ -49,6 +51,14 @@ export default function App() {
   const [output, setOutput] = useState<OutputInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
+  // The upload dialog: the files dropped to open it, and the last choice of what they are.
+  const [uploadFiles, setUploadFiles] = useState<File[] | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
+  const [sites, setSites] = useState<Site[]>([]);
+  const openUpload = (files: File[]) => {
+    api.sites().then(setSites).catch(() => undefined);
+    setUploadFiles(files);
+  };
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [colors, setColors] = useState<MarkColors | null>(null);
   const loadColors = useCallback(() => {
@@ -145,7 +155,9 @@ export default function App() {
     }
   };
 
-  const upload = async (files: File[], target: number | "green" | null) => {
+  const upload = async (files: File[], target: UploadTarget) => {
+    setUploadFiles(null);
+    setUploadTarget(target);
     setUploading(true);
     setNotice(null);
     try {
@@ -205,7 +217,7 @@ export default function App() {
       </header>
       <div className="layout">
         <nav className="sidebar">
-          <Dropzone onFiles={upload} busy={uploading} sitesVersion={settingsVersion} />
+          <Dropzone onOpen={openUpload} busy={uploading} />
           {notice && <p className="notice">{notice}</p>}
           <UploadQueue
             uploads={uploads}
@@ -249,6 +261,15 @@ export default function App() {
             void refresh();
           }}
           onSaved={() => { loadOutput(); loadColors(); }}
+        />
+      )}
+      {uploadFiles !== null && (
+        <UploadDialog
+          sites={sites}
+          initialFiles={uploadFiles}
+          initialTarget={uploadTarget}
+          onCancel={() => setUploadFiles(null)}
+          onUpload={(files, target) => void upload(files, target)}
         />
       )}
       {toast && (
