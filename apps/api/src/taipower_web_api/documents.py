@@ -29,7 +29,7 @@ from .settings import KEYWORD_SETTINGS, Settings
 from .store import Store
 
 TAIPOWER, OTHER = "taipower", "other"
-DOCUMENT_TYPES = {TAIPOWER: "台電帳單", OTHER: "其他單據", "green": "綠電明細"}
+DOCUMENT_TYPES = {TAIPOWER: "台電帳單", OTHER: "其他單據", "green": "綠電單據"}
 
 # Where a value came from.
 SOURCES = {

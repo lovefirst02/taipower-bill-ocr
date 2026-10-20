@@ -89,6 +89,54 @@ def green_statement():
     return statement
 
 
+def ocr_table(top, rows, xs=(150, 280, 500, 700, 920, 1290, 1440, 1760)):
+    return [OcrLine(text, x, top + index * 100, max(40, len(text) * 18), 34, None)
+            for index, row in enumerate(rows) for text, x in zip(row, xs) if text]
+
+
+def list_header(y):
+    cells = [("編號", 133), ("用戶電號", 288), ("用戶表號", 504), ("發電電號", 717), ("發電表號", 931), ("當月服務使用量(度)", 1109), ("費用(元)", 1669)]
+    return [OcrLine(text, x, y, len(text) * 30, 37, None) for text, x in cells] + [OcrLine("輸電費率", 1434, y - 20, 110, 37, None), OcrLine("(元/度)", 1441, y + 18, 100, 36, None)]
+
+
+def transfer_list():
+    """Taipower's transfer fee list for one solar service: two of our meters and someone else's."""
+    page = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+    page.ocr_lines = [
+        OcrLine("台灣電力公司", 843, 44, 360, 67, None), OcrLine("費用清單", 848, 145, 300, 92, None),
+        OcrLine("服務編號：1-11210-08-00210", 67, 295, 700, 59, None), OcrLine("2026年08月", 1658, 300, 180, 42, None),
+        OcrLine("轉供輸電費清單", 67, 380, 260, 44, None), *list_header(457),
+        *ocr_table(549, [
+            ("1", "05785193319", "KU20021670", "08376003416", "TI20850896", "93,219", "0.0778", "7,252"),
+            ("2", "05785204210", "GB21900276", "08376003416", "TI20850896", "556,983", "0.0778", "43,333"),
+            ("3", "06156256254", "GE21903170", "08376003416", "TI20850896", "240,000", "0.0778", "18,672"),
+        ]),
+        OcrLine("轉供配電費清單", 85, 916, 260, 41, None), *list_header(993),
+        *ocr_table(1087, [
+            ("1", "05785193319", "KU20021670", "08376003416", "TI20850896", "93,219", "0.1788", "16,668"),
+            ("2", "05785204210", "GB21900276", "08376003416", "TI20850896", "556,983", "0.1788", "99,589"),
+        ]),
+    ]
+    return page
+
+
+def purchase_notice(kwh="650,202", supply="166,842"):
+    """A retailer's purchase notice for the same service (our two meters' kWh and Taipower's fees)."""
+    page = BillResult({"document_type": "unknown", "quality": {"warnings": []}})
+    cells = [
+        ("企業購電電費通知單", 1055, 225), ("電能轉/直供服務編號：1-11210-08-00210", 90, 307),
+        ("計费期間", 88, 344), ("2026/08/01-2026/08/31", 386, 358),
+        ("購售费率(元/度)", 143, 595), ("Purchase Rate (NT/kWh)", 143, 618), ("5.6000", 638, 624),
+        ("實際購售電量(度)", 707, 606), ("Actual Purchase Volume (kWh)", 704, 629), (kwh, 1180, 637),
+        ("電能供應费用(元)", 90, 744), ("Power Supply Fees (NT)", 88, 766), (supply, 629, 776),
+        ("憑證審查費(元)", 704, 758), ("T-REC Review Fee (NTD)", 700, 779), ("1,743", 1191, 789),
+        ("每期價金未税金額合計(元)", 91, 824), ("Installment Price Exculsive of Tax", 90, 846), ("3,809,716", 610, 857),
+        ("本期應付總额(元)", 1249, 860), ("Installment Price (NT)", 1248, 884), ("4,000,202", 1779, 883),
+    ]
+    page.ocr_lines = [OcrLine(text, x, y, len(text) * 12, 24, None) for text, x, y in cells]
+    return page
+
+
 def energy_saving_page():
     """A bill's back page: the 節電資訊 table with this period's usage."""
     page = BillResult({
@@ -874,8 +922,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(statement["total_kwh"], 36145 + 242478 + 120208)  # 餘電加收 is not green power
         labels = {mark["text"] for mark in detail["marks"] if mark["type"] == "label"}
         self.assertEqual(labels, {"Green Electricity (kWh)", "Green Electricity Cost"})
-        self.assertTrue(any("period not found" in issue["en"] for issue in detail["issues"]))
+        self.assertTrue(any("period not found" in issue["en"].lower() for issue in detail["issues"]))
         self.assertEqual(self.first_item("Amy")["kind"], "green")
+        self.assertEqual((statement["type"], self.first_item("Amy")["green_type"]), ("statement", "statement"))
         self.assertEqual(detail["mark_notes"], [])  # no 本期度數 note: not a Taipower bill
 
     def test_edited_lines_are_checked_again(self):
@@ -887,7 +936,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((first["cost"], first["check"]["status"], first["check"]["difference"]), (230000, "check", 230000 - 220672))
         self.assertEqual(saved["row"]["Billing Period 計費期間"], "113/01/01~113/01/31")
         self.assertTrue(any("Line 1" in issue["en"] for issue in saved["issues"]))
-        self.assertFalse(any("period not found" in issue["en"] for issue in saved["issues"]))
+        self.assertFalse(any("period not found" in issue["en"].lower() for issue in saved["issues"]))
         # A larger allowance accepts it.
         self.local_client().put("/api/settings", json={"values": {"green_tolerance": 10000}})
         again = self.client.get(f"/api/items/{detail['id']}").json()
@@ -904,25 +953,81 @@ class ApiTests(unittest.TestCase):
             self.upload("Amy", "taipower.png")
         detail = self.upload_green()
         saved = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {"period": "113/01/01~113/01/31", "lines": detail["green"]["lines"]}}).json()
-        checks = {entry["meter"]: entry for entry in saved["green"]["crosscheck"]}
+        checks = {entry["meter"]: entry for entry in saved["green"]["comparisons"]["meters"]}
         same = checks["10512918917"]
-        self.assertEqual((same["statement_kwh"], same["taipower_kwh"], same["difference"], same["how"]), (278623, 278623, 0, "same period"))
-        self.assertEqual(checks["10512918918"]["how"], "none")
+        self.assertEqual((same["retailer_kwh"], same["bill_kwh"], same["retailer_bill_difference"], same["bill_how"]), (278623, 278623, 0, "same period"))
+        self.assertEqual(checks["10512918918"]["bill_how"], "none")
         # A bill over another period is prorated by days, and said so.
         half = self.client.put(f"/api/items/{detail['id']}", json={"user": "Amy", "green": {"period": "113/01/01~113/01/15", "lines": detail["green"]["lines"]}}).json()
-        prorated = {entry["meter"]: entry for entry in half["green"]["crosscheck"]}["10512918917"]
-        self.assertEqual((prorated["how"], prorated["taipower_kwh"]), ("prorated", round(278623 * 15 / 31)))
+        prorated = {entry["meter"]: entry for entry in half["green"]["comparisons"]["meters"]}["10512918917"]
+        self.assertEqual((prorated["bill_how"], prorated["bill_kwh"]), ("prorated", round(278623 * 15 / 31)))
 
         self.client.post(f"/api/items/{detail['id']}/submit", json={"user": "Amy"})
         book = load_workbook(self.settings.report_workbook)
         self.assertEqual(book["Bills"].max_row, 1)  # statements are not bills
         header = [cell.value for cell in book["GreenPower"][1]]
         rows = [dict(zip(header, line)) for line in book["GreenPower"].iter_rows(min_row=2, values_only=True)]
-        self.assertEqual(sum(row["本月電費"] for row in rows), 220671 + 1480377 + 745913 + 237)
+        self.assertEqual(sum(row["金額"] for row in rows), 220671 + 1480377 + 745913 + 237)
         self.assertEqual({row["月份"] for row in rows}, {"2024-01"})
         header = [cell.value for cell in book["GreenCheck"][1]]
         checks = [dict(zip(header, line)) for line in book["GreenCheck"].iter_rows(min_row=2, values_only=True)]
-        self.assertEqual({row["電號"]: row["比對方式"] for row in checks}["10512918918"], "找不到同電號的台電帳單")
+        self.assertEqual({row["電號"]: row["帳單比對方式"] for row in checks}["10512918918"], "找不到台電帳單")
+
+    def upload_as(self, name, page, user="Amy"):
+        with mock.patch.object(FakeExtractor, "extract", lambda self, path, number: page):
+            self.upload(user, name)
+        item_id = next(item["id"] for item in self.client.get("/api/items", params={"user": user}).json() if item["filename"] == name)
+        return self.client.get(f"/api/items/{item_id}").json()
+
+    def test_taipower_transfer_list_is_read_and_filtered_by_our_sites(self):
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
+        listed = self.upload_as("list.png", transfer_list())
+        view = listed["green"]
+        self.assertEqual((view["type"], view["service"], view["period"]), ("transfer_list", "1-11210-08-00210", "2026/08/01~2026/08/31"))
+        self.assertEqual([(row["section"], row["user_meter"], row["ours"], row["check"]["status"]) for row in view["rows"]], [
+            ("轉供輸電費清單", "05785193319", True, "ok"), ("轉供輸電費清單", "05785204210", True, "ok"),
+            ("轉供輸電費清單", "06156256254", False, "ok"),
+            ("轉供配電費清單", "05785193319", True, "ok"), ("轉供配電費清單", "05785204210", True, "ok"),
+        ])
+        self.assertEqual(view["total_fees"], 7252 + 43333 + 16668 + 99589)  # ours only
+        meters = {entry["meter"]: entry for entry in view["comparisons"]["meters"]}
+        self.assertEqual(set(meters), {"05785193319", "05785204210"})
+        self.assertEqual((meters["05785193319"]["taipower_list_kwh"], meters["05785193319"]["taipower_list_fees"]), (93219, 7252 + 16668))
+
+    def test_purchase_notice_agrees_with_taipowers_list(self):
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
+        self.upload_as("list.png", transfer_list())
+        notice = self.upload_as("notice.png", purchase_notice())
+        view = notice["green"]
+        self.assertEqual((view["type"], view["values"]["kwh"], view["values"]["supply_fees"]), ("notice", 650202, 166842))
+        service = view["comparisons"]["services"][0]
+        self.assertEqual((service["service"], service["taipower_list_kwh"], service["kwh_difference"]), ("1-11210-08-00210", 93219 + 556983, 0))
+        self.assertEqual((service["taipower_list_fees"], service["fee_difference"]), (7252 + 43333 + 16668 + 99589, 0))
+        # A notice that does not match is shown with the difference.
+        other = self.upload_as("notice2.png", purchase_notice(kwh="650,000", supply="166,800"), user="Ben")
+        services = other["green"]["comparisons"]["services"]
+        self.assertTrue(services)
+
+    def test_three_way_check_reaches_the_workbook(self):
+        self.save_sites([{"name": "彰化廠", "meters": ["05785193319", "05785204210"]}])
+        listed = self.upload_as("list.png", transfer_list())
+        notice = self.upload_as("notice.png", purchase_notice())
+        bill = official_sample_bill()
+        bill["user_info"]["customer_number"] = "05785204210"
+        bill["user_info"]["billing_period"] = {"start": "115/08/01", "end": "115/08/31"}
+        bill["user_info"]["transferred_energy"] = {"peak_kwh": 556983}
+        taipower = self.upload_as("bill.png", bill)
+        for item in (listed, notice, taipower):
+            self.client.post(f"/api/items/{item['id']}/submit", json={"user": "Amy"})
+        book = load_workbook(self.settings.report_workbook)
+        self.assertEqual(book["TransferList"].max_row, 1 + 5)
+        header = [cell.value for cell in book["GreenCheck"][1]]
+        rows = {row[header.index("電號")]: dict(zip(header, row)) for row in book["GreenCheck"].iter_rows(min_row=2, values_only=True)}
+        checked = rows["05785204210"]
+        self.assertEqual((checked["台電清單轉供度數"], checked["台電帳單轉供度數"], checked["差異（帳單−台電清單）"]), (556983, 556983, 0))
+        header = [cell.value for cell in book["GreenServices"][1]]
+        service = dict(zip(header, next(book["GreenServices"].iter_rows(min_row=2, values_only=True))))
+        self.assertEqual((service["差異（B−台電清單）"], service["差異（E−台電清單）"]), (0, 0))
 
     def test_user_name_is_required(self):
         response = self.client.post("/api/uploads", data={"user": "  "}, files=[("files", ("a.png", png_bytes(), "image/png"))])

@@ -179,19 +179,8 @@ def create_app(
         return page["marks"] or []
 
     def green_view(page: dict[str, Any]) -> dict[str, Any] | None:
-        """A green power statement's lines with their checks, and the Taipower cross-check."""
-        if page.get("kind") != green.GREEN:
-            return None
-        statement = page.get("green") or {}
-        lines = green.checked_lines(statement, settings.green_tolerance)
-        return {
-            "period": statement.get("period"),
-            "lines": lines,
-            "tolerance": settings.green_tolerance,
-            "total_kwh": sum(line.get("kwh") or 0 for line in lines if line["green"]),
-            "total_cost": sum(line.get("cost") or 0 for line in lines),
-            "crosscheck": green.crosscheck(store, page),
-        }
+        """A green power document with its checks and how it agrees with the others."""
+        return green.view(store, page, settings) if page.get("kind") == green.GREEN else None
 
     def view_pages(page: dict[str, Any]) -> list[dict[str, Any]]:
         """Every page of the bill in document order; any of them can hold marks."""
@@ -417,9 +406,8 @@ def create_app(
                 "issue_count": len(page["issues"] or []),
                 "billing_period": row.get("Billing Period 計費期間"),
                 "customer_number": row.get("Custom No. 電號"),
-                "total": row.get("應繳總金額") if page.get("kind") != green.GREEN else sum(
-                    line.get("cost") or 0 for line in (page.get("green") or {}).get("lines") or []
-                ),
+                "total": row.get("應繳總金額") if page.get("kind") != green.GREEN else green.total_cost(page),
+                "green_type": green.type_of(page.get("green")) if page.get("kind") == green.GREEN else None,
                 "kind": page.get("kind") or documents.TAIPOWER,
                 "site": (store.site_of(page) or {}).get("name"),
                 "submitted_at": page["submitted_at"],
@@ -491,14 +479,12 @@ def create_app(
             if page.get("kind") != green.GREEN:
                 raise HTTPException(409, "only a green power statement has lines")
             try:
-                lines = green.clean_lines(update.green.get("lines") or [])
+                statement = green.update(page, update.green)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from None
-            period = (str(update.green.get("period") or "").strip()) or None
-            statement = {"period": period, "lines": lines}
             values["green"] = statement
             row = dict(values.get("row") or page["row"] or {})
-            row["Billing Period 計費期間"] = period
+            row["Billing Period 計費期間"] = statement["period"]
             values["row"] = row
             values["issues"] = green.issues_of(statement, settings)
             page = {**page, "issues": values["issues"]}

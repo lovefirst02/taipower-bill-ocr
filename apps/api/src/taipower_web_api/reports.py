@@ -219,14 +219,18 @@ def report_tables(pages: list[Mapping[str, Any]], store: Store, output_dir: Path
     """The report workbook's sheets: bills, their months, and green power statements."""
     bills = [page for page in pages if not _is_green(page)]
     statements = [page for page in pages if _is_green(page)]
+    # Compared across every green power document, submitted or not.
+    checks = green.check_rows(store)
     return {
         "Bills": (REPORT_COLUMNS, [report_row(page, output_dir) for page in bills]),
         # Each bill per site and calendar month, split by days.
         "Monthly": (MONTHLY_COLUMNS, monthly_rows(bills, store, output_dir)),
-        # Green power statements: each line per month with its check, and
-        # each meter's transferred kWh against its Taipower bills.
+        # Green power: retailers' statements and notices per month with their
+        # checks, Taipower's transfer fee lists, and how they all agree.
         "GreenPower": (green.GREEN_COLUMNS, green.green_rows(statements, store, tolerance, green_common(output_dir))),
-        "GreenCheck": (green.CHECK_COLUMNS, green.check_rows(statements, store)),
+        "TransferList": (green.LIST_COLUMNS, green.list_rows(statements, store)),
+        "GreenCheck": (green.CHECK_COLUMNS, checks[0]),
+        "GreenServices": (green.SERVICE_COLUMNS, checks[1]),
     }
 
 
@@ -244,7 +248,7 @@ def export_workbook(pages: Iterable[Mapping[str, Any]], store: Store | None = No
             sheet.append(report_row(page))
     if store is not None:
         tables = report_tables(pages, store, None, tolerance)
-        for name in ("Monthly", "GreenPower", "GreenCheck"):
+        for name in ("Monthly", "GreenPower", "TransferList", "GreenCheck", "GreenServices"):
             columns, rows = tables[name]
             extra = workbook.create_sheet(name)
             extra.append(columns)
@@ -316,23 +320,19 @@ def green_record(page: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
     """The master's record of a green power statement: one field per line value."""
     record = copy.deepcopy(dict(page["dataset"]))
     statement = page.get("green") or {}
-    for index, line in enumerate(statement.get("lines") or [], start=1):
-        box = line.get("box")
-        for name in green.EDITABLE_FIELDS:
-            if line.get(name) is None:
-                continue
-            record["fields"].append({
-                "block": "green_power", "block_label": "綠電明細", "key": f"line{index}.{name}", "label": name,
-                "printed_label": None, "value": line[name], "recognized": True, "status": "reviewed",
-                "confidence": "reviewed", "checks": None, "cross_check_value": None,
-                "source": f"statement:{reviewer}", "origin": "statement",
-                "bbox": dict(zip(("x", "y", "width", "height"), box)) if box else None,
-            })
+    kind = green.type_of(statement)
+    for key, label, value, box in green.master_fields(statement):
+        record["fields"].append({
+            "block": "green_power", "block_label": green.TYPE_NAMES[kind], "key": key, "label": label,
+            "printed_label": None, "value": value, "recognized": True, "status": "reviewed",
+            "confidence": "reviewed", "checks": None, "cross_check_value": None,
+            "source": f"{kind}:{reviewer}", "origin": kind,
+            "bbox": dict(zip(("x", "y", "width", "height"), box)) if box else None,
+        })
     start, end = _split_period(statement.get("period"))
     record["summary"].update(
-        document_type="green_power_statement", billing_period_start=start, billing_period_end=end,
-        total_amount_twd=sum(line.get("cost") or 0 for line in statement.get("lines") or []),
-        needs_review=False, confidence_review=0,
+        document_type=f"green_power_{kind}", billing_period_start=start, billing_period_end=end,
+        total_amount_twd=green.total_cost(page), needs_review=False, confidence_review=0,
     )
     return record
 
