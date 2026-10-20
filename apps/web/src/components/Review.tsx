@@ -5,6 +5,8 @@ import { lineBoxes, linesAt, linesBox, PICK_LABELS, placeLabel, valueFor } from 
 import type { Box } from "../pick";
 import type { Column, Issue, Item, Mark, MarkColors, Row, Site, ValueSource, ViewPage } from "../types";
 import { FieldForm } from "./FieldForm";
+import { GreenTable } from "./GreenTable";
+import type { GreenDraft } from "./GreenTable";
 import { MarksPanel } from "./MarksPanel";
 import { PageViewer } from "./PageViewer";
 
@@ -79,6 +81,9 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
   const [sites, setSites] = useState<Site[]>([]);
   // The site chosen by hand: undefined = unchanged, null = by 電號.
   const [siteChoice, setSiteChoice] = useState<number | null | undefined>(undefined);
+  // A green power statement being edited (kind "green").
+  const [greenDraft, setGreenDraft] = useState<GreenDraft | null>(null);
+  const [greenEdited, setGreenEdited] = useState(false);
 
   useEffect(() => {
     api.tags(user).then(setTags).catch(() => undefined);
@@ -104,6 +109,15 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     setIssues(loaded.issues ?? []);
     setNotes(loaded.mark_notes ?? []);
     setSiteChoice(undefined);
+    setGreenDraft(
+      loaded.green
+        ? {
+            period: loaded.green.period ?? "",
+            lines: loaded.green.lines.map(({ check: _check, green: _green, ...cells }) => ({ ...cells })),
+          }
+        : null,
+    );
+    setGreenEdited(false);
     setPicking(null);
     setTagging(null);
     setDirty(false);
@@ -148,7 +162,12 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
     }
   };
 
-  const kept = { issues, mark_notes: notes, ...(siteChoice !== undefined ? { site_id: siteChoice } : {}) };
+  const kept = {
+    issues,
+    mark_notes: notes,
+    ...(siteChoice !== undefined ? { site_id: siteChoice } : {}),
+    ...(greenEdited && greenDraft ? { green: greenDraft } : {}),
+  };
   const save = () => run(() => api.save(itemId, user, row, marks, sources, kept), "Draft saved");
   const redetect = () => run(() => api.redetect(itemId), "Looked for the values again with the current keywords");
   const submit = async () => {
@@ -356,7 +375,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
           )}
         </ul>
       )}
-      <div className="review-body">
+      <div className={item.kind === "green" ? "review-body wide-side" : "review-body"}>
         <div className="viewer-column">
           {pages.length > 1 && (
             <div className="page-tabs" role="tablist">
@@ -432,6 +451,18 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
               </ul>
             </div>
           )}
+          {item.green && greenDraft ? (
+            <GreenTable
+              view={item.green}
+              draft={greenDraft}
+              editable={editable}
+              onChange={(next) => {
+                setGreenDraft(next);
+                setGreenEdited(true);
+                setDirty(true);
+              }}
+            />
+          ) : (
           <FieldForm
             columns={columns}
             row={row}
@@ -446,6 +477,7 @@ export function Review({ itemId, user, columns, onChanged, onNext, onNotify, col
             picking={picking}
             onPick={editable ? startPicking : undefined}
           />
+          )}
         </aside>
       </div>
       {preview !== null && (

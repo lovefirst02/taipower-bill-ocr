@@ -876,6 +876,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(labels, {"Green Electricity (kWh)", "Green Electricity Cost"})
         self.assertTrue(any("period not found" in issue["en"] for issue in detail["issues"]))
         self.assertEqual(self.first_item("Amy")["kind"], "green")
+        self.assertEqual(detail["mark_notes"], [])  # no 本期度數 note: not a Taipower bill
 
     def test_edited_lines_are_checked_again(self):
         detail = self.upload_green()

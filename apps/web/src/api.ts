@@ -2,7 +2,12 @@ import type { Column, Issue, Item, ItemSummary, Mark, OutputInfo, Row, SettingsS
 
 type Sources = Record<string, ValueSource>;
 /** Warnings the reviewer kept (the others were cleared). */
-type Kept = { issues: Issue[]; mark_notes: string[]; site_id?: number | null };
+type Kept = {
+  issues: Issue[];
+  mark_notes: string[];
+  site_id?: number | null;
+  green?: { period: string; lines: Record<string, string | number | null | undefined>[] };
+};
 type Tags = { mark_tags: string[]; defaults: string[] };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

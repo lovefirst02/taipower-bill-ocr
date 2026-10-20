@@ -156,6 +156,7 @@ export function BillList({ items, selectedId, onSelect, onDelete }: BillListProp
                 <span className="name">
                   {item.filename}{item.page ? ` · p${item.page}` : ""}
                   {item.kind === "other" && <span className="kind-badge" title="Not a Taipower bill: values found by keyword or filled in by hand">other</span>}
+                  {item.kind === "green" && <span className="kind-badge green" title="A retailer's green power statement">green</span>}
                 </span>
                 <span className="meta">
                   {item.site ? `${item.site} · ` : ""}{item.billing_period ?? "period ?"} · {item.total !== null ? `NT$${item.total.toLocaleString()}` : "total ?"}

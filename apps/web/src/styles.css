@@ -92,6 +92,22 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .months { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; background: var(--panel); font-size: 12px; }
 .months h4 { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
 .months ul { margin: 0; padding-left: 16px; }
+.kind-badge.green { background: #e3f5e8; color: #1e7a3c; }
+.green-table { display: flex; flex-direction: column; gap: 10px; }
+.green-table fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
+.green-table legend { font-size: 13px; font-weight: 600; padding: 0 4px; }
+.green-period { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.green-period input { flex: 1; padding: 4px 6px; }
+.green-scroll { overflow-x: auto; }
+.green-table table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.green-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 3px 4px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.green-table td { padding: 2px 3px; white-space: nowrap; }
+.green-table td input { width: 62px; padding: 2px 3px; font: inherit; box-sizing: border-box; }
+.green-table .num, .green-table input.num { text-align: right; }
+.green-table tr.check { background: #fff4e5; }
+.green-table .diff.ok { color: #1e7a3c; }
+.green-table .diff.check { color: var(--danger); font-weight: 600; }
+.green-table tfoot td { border-top: 1px solid var(--border); font-weight: 600; padding-top: 4px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; }
 .queue-actions { display: flex; gap: 2px; }
 button.link.danger { color: var(--danger); }
@@ -191,6 +207,9 @@ main { flex: 1; min-width: 0; display: flex; }
 .marks .focus-box { fill: none; stroke: #1a73e8; stroke-dasharray: 10 6; pointer-events: none; }
 
 .side { flex: 2; min-width: 320px; max-width: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+/* A green power statement's table needs room. */
+.review-body.wide-side .side { flex: 3; max-width: 860px; }
+.review-body.wide-side .viewer-column { flex: 2; }
 .marks-panel, .field-form fieldset { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .panel-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .marks-panel h3 { font-size: 14px; }

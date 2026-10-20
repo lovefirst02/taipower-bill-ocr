@@ -224,7 +224,8 @@ class OcrWorker:
     def _add_usage_marks(self, upload_id: int) -> None:
         """Once every page is read, mark 本期 usage, which is often on the back page."""
         for page in self.store.pages(bills_only=True):
-            if page["upload_id"] != upload_id or page["status"] != "draft" or page.get("kind") == documents.OTHER:
+            # Only Taipower bills have a back page with 節電資訊.
+            if page["upload_id"] != upload_id or page["status"] != "draft" or (page.get("kind") or documents.TAIPOWER) != documents.TAIPOWER:
                 continue
             marks, notes = page["marks"] or [], page["mark_notes"] or []
             if any(is_usage_mark(mark) for mark in marks) or any(USAGE_LABEL in note for note in notes):

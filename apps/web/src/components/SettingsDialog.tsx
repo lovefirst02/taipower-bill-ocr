@@ -10,6 +10,7 @@ const ENV_NAMES: Record<keyof SettingsValues, string> = {
   workbook_retry_seconds: "TAIPOWER_WORKBOOK_RETRY_SECONDS",
   host: "TAIPOWER_HOST",
   port: "TAIPOWER_PORT",
+  green_tolerance: "TAIPOWER_GREEN_TOLERANCE",
   highlight_color: "TAIPOWER_HIGHLIGHT_COLOR",
   label_color: "TAIPOWER_LABEL_COLOR",
   company_names: "TAIPOWER_COMPANY_NAMES",
@@ -237,6 +238,31 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
               Default keywords (company names are kept)
             </button>
           )}
+        </section>
+
+        <section>
+          <h4>Green power statements</h4>
+          <label className="setting">
+            <span>Allowed difference per line</span>
+            <span className="row">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                className="short"
+                value={values.green_tolerance}
+                disabled={disabled("green_tolerance")}
+                onChange={(event) => set("green_tolerance", Number(event.target.value))}
+              />
+              NT$
+            </span>
+            {lockNote("green_tolerance") ?? (
+              <span className="hint">
+                How far a statement line&apos;s charge may be from kWh × (base price + transfer rate + certificate rate) before it is flagged.
+                Retailers round finer amounts one by one, so a few NT$ is normal.
+              </span>
+            )}
+          </label>
         </section>
 
         <section>

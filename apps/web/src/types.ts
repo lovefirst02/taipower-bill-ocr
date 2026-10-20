@@ -95,7 +95,39 @@ export interface MonthShare {
 }
 
 /** A Taipower bill, or another document (e.g. a landlord's allocation). */
-export type DocumentKind = "taipower" | "other";
+export type DocumentKind = "taipower" | "other" | "green";
+
+export interface GreenLine {
+  meter: string | null;
+  energy: string | null;
+  base: number | null;
+  transfer_rate: number | null;
+  certificate_rate: number | null;
+  unit_price: number | null;
+  kwh: number | null;
+  cost: number | null;
+  check: { expected: number | null; difference: number | null; status: "ok" | "check" | "incomplete" };
+  green: boolean;
+}
+
+export interface GreenCrosscheck {
+  meter: string;
+  site: string | null;
+  statement_kwh: number;
+  taipower_kwh: number | null;
+  difference: number | null;
+  how: "same period" | "prorated" | "none" | "no period";
+  bills: { id: number; filename: string; period: string | null; kwh: number }[];
+}
+
+export interface GreenView {
+  period: string | null;
+  lines: GreenLine[];
+  tolerance: number;
+  total_kwh: number;
+  total_cost: number;
+  crosscheck: GreenCrosscheck[];
+}
 
 /** Where a value came from. */
 export type ValueSource = "taipower" | "keyword" | "pick" | "manual" | "alternative";
@@ -137,6 +169,8 @@ export interface Item {
   sources: Record<string, ValueSource>;
   site: ItemSite | null;
   months: MonthShare[];
+  /** A retailer's green power statement (kind "green"). */
+  green: GreenView | null;
   submitted_at: string | null;
   submitted_by: string | null;
   locked_workbooks?: string[];
@@ -173,6 +207,7 @@ export interface SettingsValues {
   port: number;
   highlight_color: string;
   label_color: string;
+  green_tolerance: number;
   company_names: string[];
   self_terms: string[];
   period_keywords: string[];
