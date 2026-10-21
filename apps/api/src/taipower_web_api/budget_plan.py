@@ -1,6 +1,8 @@
 """Planning the electricity budget: site × month × energy (grey, solar, wind).
 
-For each site and energy of a year:
+A site has one annual budget: what is not set for an energy is shared
+among the energies left by their estimated costs (all to grey when none has
+an estimate). For each site and energy of a year:
 
 * the estimated kWh and unit price of every month — typed in, or by default
   last year's actual kWh of the month, and for the price grey's average
@@ -106,6 +108,20 @@ def plan(store: Store, year: int, service_energy: Mapping[str, str]) -> dict[str
             energies[energy] = _energy_plan(name, site.get("entity_id"), energy, year, saved.get((name, energy)), actual, contracts)
         total_row = saved.get((name, "total"))
         approved_total = _d(total_row["annual_budget"]) if total_row else None
+        if approved_total is not None:
+            # The site's budget, less the energies set by hand, shared by the others' estimates.
+            unset = [energy for energy in ENERGIES if energies[energy]["annual_input"] is None]
+            left = approved_total - sum((_d(energies[energy]["annual_input"]) or Decimal(0) for energy in ENERGIES if energy not in unset), Decimal(0))
+            if unset:
+                weights = [sum((_d(month["estimated_cost"]) or Decimal(0) for month in energies[energy]["months"]), Decimal(0)) for energy in unset]
+                if not sum(weights):
+                    weights = [Decimal(1) if energy == "grey" else Decimal(0) for energy in unset]
+                    if not sum(weights):
+                        weights = [Decimal(1)] * len(unset)
+                shares = _largest_remainder(max(left, Decimal(0)), weights)
+                for energy, share in zip(unset, shares):
+                    energies[energy] = _energy_plan(name, site.get("entity_id"), energy, year, saved.get((name, energy)), actual, contracts,
+                                                    site_share=share)
         sum_annual = sum((_d(energies[energy]["annual"]) or Decimal(0) for energy in ENERGIES), Decimal(0))
         result.append({
             "site": name, "entity": entities.get(site.get("entity_id")),
@@ -117,7 +133,9 @@ def plan(store: Store, year: int, service_energy: Mapping[str, str]) -> dict[str
 
 
 def _energy_plan(site: str, entity_id: Any, energy: str, year: int, saved: Mapping[str, Any] | None,
-                 actual: Mapping[tuple[str, str, str], tuple[Decimal | None, Decimal | None]], contracts: list) -> dict[str, Any]:
+                 actual: Mapping[tuple[str, str, str], tuple[Decimal | None, Decimal | None]], contracts: list,
+                 site_share: Decimal | None = None) -> dict[str, Any]:
+    """``site_share``: the energy's part of the site's budget, when not set for the energy itself."""
     saved = saved or {}
     typed = saved.get("months") or {}
     adjustment = _d(saved.get("adjustment_pct")) or Decimal(0)
@@ -165,7 +183,12 @@ def _energy_plan(site: str, entity_id: Any, energy: str, year: int, saved: Mappi
 
     estimates = [item["estimated_cost"] or Decimal(0) for item in months]
     approved = _d(saved.get("annual_budget"))
-    annual = approved if approved is not None else sum(estimates, Decimal(0)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    if approved is not None:
+        annual, method = approved, "approved"
+    elif site_share is not None:
+        annual, method = site_share, "site share"
+    else:
+        annual, method = sum(estimates, Decimal(0)).quantize(Decimal(1), rounding=ROUND_HALF_UP), "estimate"
     # Shared by the estimates; a month without one weighs as the average
     # month, and with none at all the budget is shared evenly.
     known = [item["estimated_cost"] for item in months if item["estimated_cost"]]
@@ -194,7 +217,7 @@ def _energy_plan(site: str, entity_id: Any, energy: str, year: int, saved: Mappi
     forecast = _forecast(months, last_year, adjustment, annual, spent)
     return {
         "energy": energy, "annual_input": _plain(approved), "annual": _plain(annual),
-        "method": "approved" if approved is not None else "estimate", "allocation": allocation, "adjustment_pct": _plain(adjustment, 4),
+        "method": method, "allocation": allocation, "adjustment_pct": _plain(adjustment, 4),
         "months": months, "actual_cost": _plain(spent),
         "utilization": float(round(spent / annual, 4)) if annual else None,
         "forecast": forecast,
@@ -274,7 +297,7 @@ def fact_rows(planned: Mapping[str, Any]) -> list[list[Any]]:
                     year, number, date(year, number, 1), site["site"], ENERGY_NAMES[energy], item["annual"], month["kwh"], month["rate"],
                     month["estimated_cost"], month["planned"], month["actual_kwh"], month["actual_cost"], month["adopted_cost"],
                     month["prior_carry"], month["available"], month["balance"], "Actual" if month["has_actual"] else "Estimated",
-                    ("Approved" if item["method"] == "approved" else "Estimate") + {"estimate": "", "estimate + average": " / gaps at average",
+                    {"approved": "Approved", "site share": "Site share", "estimate": "Estimate"}[item["method"]] + {"estimate": "", "estimate + average": " / gaps at average",
                                                                                   "even": " / even"}[item["allocation"]],
                     month["forecast_kwh"], month["forecast_cost"], month["adjusted_budget"],
                 ])

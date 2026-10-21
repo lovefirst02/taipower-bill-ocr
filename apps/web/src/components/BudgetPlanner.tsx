@@ -161,7 +161,7 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
     <div className="green-scroll">
       <table className="dash-table plan-sites">
         <thead>
-          <tr><th>Site</th><th>Entity</th><th>Site annual budget</th>{ENERGIES.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Sum</th><th>Check</th><th>Actual</th><th>Used</th><th>Year-end forecast</th><th>vs budget</th></tr>
+          <tr><th>Site</th><th>Entity</th><th title="The site's one budget for the year: shared among its energies">Site annual budget</th>{ENERGIES.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Sum</th><th>Check</th><th>Actual</th><th>Used</th><th>Year-end forecast</th><th>vs budget</th></tr>
         </thead>
         <tbody>
           {plan.sites.map((site) => {
@@ -173,7 +173,8 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
                 <td><input key={`total-${site.total_budget}`} className="num" defaultValue={site.total_budget ?? ""} disabled={!plan.can_edit} placeholder="—"
                   onClick={(event) => event.stopPropagation()} onBlur={(event) => saveAnnual(site, "total", event.target.value)} /></td>
                 {ENERGIES.map(({ key }) => (
-                  <td key={key} title={site.energies[key].method === "estimate" ? "Not set: the estimated costs added up" : "Approved budget"}>
+                  <td key={key} title={site.energies[key].method === "estimate" ? "Not set: the estimated costs added up"
+                    : site.energies[key].method === "site share" ? "Not set: its share of the site's budget, by the estimated costs" : "Set for this energy"}>
                     <input key={`${key}-${site.energies[key].annual_input}`} className="num" defaultValue={site.energies[key].annual_input ?? ""} disabled={!plan.can_edit}
                       placeholder={money(site.energies[key].annual)} onClick={(event) => event.stopPropagation()}
                       onBlur={(event) => saveAnnual(site, key, event.target.value)} />
@@ -200,7 +201,11 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
           })}
         </tbody>
       </table>
-      <p className="hint">An energy left empty is budgeted at its estimated costs added up (shown in grey). Check: the site&apos;s annual budget against its energies&apos;. Click a site to plan it month by month.</p>
+      <p className="hint">
+        A site&apos;s annual budget is shared among its energies by their estimated costs (all to grey when none has an estimate); an energy set
+        by hand keeps its amount and the rest goes to the others. Without a site budget, an energy left empty is its estimated costs added up.
+        Shown in grey: what the system worked out. Check: the energies against the site&apos;s budget. Click a site to plan it month by month.
+      </p>
     </div>
   );
 }
@@ -230,7 +235,7 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
   return (
     <>
       <div className="plan-controls">
-        <span>Annual budget: <strong>NT${money(plan.annual)}</strong> ({plan.method === "approved" ? "approved" : "estimates added up"}; {ALLOCATIONS[plan.allocation]})</span>
+        <span>Annual budget: <strong>NT${money(plan.annual)}</strong> ({{ approved: "set for this energy", "site share": "share of the site's budget", estimate: "estimates added up" }[plan.method]}; {ALLOCATIONS[plan.allocation]})</span>
         <label>Adjustment % <input className="num short" value={adjustment} disabled={!canEdit} placeholder="0" onChange={(event) => setAdjustment(event.target.value)} /></label>
         <span>Used: {plan.utilization === null ? "—" : `${(plan.utilization * 100).toFixed(1)}%`}</span>
         <span title="Months with documents are their actuals; the others are last year's month × this year's trend (else this year's average month, else the estimate), at this year's actual price">

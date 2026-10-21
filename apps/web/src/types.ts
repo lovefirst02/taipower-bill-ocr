@@ -430,7 +430,8 @@ export interface EnergyPlan {
   /** The approved annual budget typed in; null: the estimates added up. */
   annual_input: number | null;
   annual: number;
-  method: "approved" | "estimate";
+  /** approved: set for the energy; site share: its part of the site's budget; estimate: the estimates added up. */
+  method: "approved" | "site share" | "estimate";
   /** By the estimates; gaps weighed as the average month; or evenly (no estimates at all). */
   allocation: "estimate" | "estimate + average" | "even";
   adjustment_pct: number;

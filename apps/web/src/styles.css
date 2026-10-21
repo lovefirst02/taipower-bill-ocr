@@ -408,3 +408,4 @@ main { flex: 1; min-width: 0; display: flex; }
 .dashboard > * { flex-shrink: 0; }
 /* The KPIs and the energy cards are one block. */
 .budget-kpis { display: flex; flex-direction: column; gap: 10px; }
+.plan-sites td:nth-child(3) input { font-weight: 600; border-color: var(--accent); }

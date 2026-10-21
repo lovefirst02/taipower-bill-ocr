@@ -1463,10 +1463,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(months[7]["balance"], round(months[7]["available"] - 761905, 2))
         self.assertEqual(grey["utilization"], round(761905 / 1200000, 4))
 
-        # The site's whole budget is checked against its energies' budgets.
+        # The site's whole budget: what grey does not take goes to the energies left (here solar, the only one estimated).
         local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "total", "annual_budget": 2000000})
         site = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]
-        self.assertEqual((site["total_budget"], site["allocation"]), (2000000, "check"))
+        self.assertEqual((site["total_budget"], site["allocation"], site["energies_total"]), (2000000, "ok", 2000000))
+        # Energies set by hand beyond the site's budget: the others get nothing, and it is pointed out.
+        local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "total", "annual_budget": 1000000})
+        site = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]
+        self.assertEqual((site["allocation"], site["energies"]["solar"]["annual"]), ("check", 0))
 
         # Budget vs actual uses the planned budget.
         budget_rows = {row["month"]: row for row in self.client.get("/api/budget").json()["rows"] if row["site"] == "TNF"}
@@ -1538,6 +1542,30 @@ class ApiTests(unittest.TestCase):
         book = load_workbook(io.BytesIO(self.client.get("/api/export.xlsx", params={"user": "Amy"}).content))
         header = [cell.value for cell in book["PowerBI_EnergyBudget"][1]]
         self.assertEqual(header[-3:], ["ForecastKWh", "ForecastCost", "AdjustedBudget"])
+
+    def test_a_sites_one_budget_is_shared_among_its_energies(self):
+        local = self.plan_setup()  # grey has estimates (last year); solar and wind have no kWh
+        site = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "total", "annual_budget": 3000000}).json()["sites"][0]
+        energies = site["energies"]
+        # Only grey has an estimate: it takes the whole budget.
+        self.assertEqual([(energies[key]["method"], energies[key]["annual"]) for key in ("grey", "solar", "wind")],
+                         [("site share", 3000000), ("site share", 0), ("site share", 0)])
+        self.assertEqual(sum(month["planned"] for month in energies["grey"]["months"]), 3000000)
+        self.assertEqual((site["energies_total"], site["allocation"]), (3000000, "ok"))
+        # Solar set by hand: the rest goes to the others.
+        local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "solar", "annual_budget": 500000,
+                                     "months": {"08": {"kwh": 100000}}})
+        site = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]
+        self.assertEqual([(site["energies"][key]["method"], site["energies"][key]["annual"]) for key in ("grey", "solar")],
+                         [("site share", 2500000), ("approved", 500000)])
+        self.assertEqual(site["allocation"], "ok")
+        # Grey and wind both estimated: shared by their estimates.
+        local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "wind", "months": {"01": {"kwh": 1000, "rate": 6}}})
+        site = self.client.get("/api/plan", params={"year": 2026}).json()["sites"][0]
+        grey_estimate = sum(month["estimated_cost"] or 0 for month in site["energies"]["grey"]["months"])
+        wind_share = site["energies"]["wind"]["annual"]
+        self.assertAlmostEqual(wind_share, 2500000 * 6000 / (grey_estimate + 6000), delta=1)
+        self.assertEqual(site["energies"]["grey"]["annual"] + wind_share, 2500000)
 
     def test_a_budget_plan_round_trips_through_excel(self):
         local = self.plan_setup()
