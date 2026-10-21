@@ -138,6 +138,10 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
             for cells in tables.rows(on_page, page, top, bottom, columns, height):
                 kwh = tables.number(tables.text_of(cells, "kwh"), integer=True)
                 fee = tables.number(tables.text_of(cells, "fee"), integer=True)
+                rate = tables.number(tables.text_of(cells, "rate"))
+                note = None
+                if fee is None and (split := split_rate(kwh, rate)):
+                    (rate, fee), note = split, _SPLIT_NOTE
                 if kwh is None or fee is None:
                     continue
                 # A meter with several generators is written once, on its first row.
@@ -146,7 +150,7 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
                 result.rows.append(TransferRow(
                     meter_read=bool(read),
                     section=section or "轉供費", user_meter=meter, generator=_digits(tables.text_of(cells, "generator")),
-                    kwh=kwh, rate=tables.number(tables.text_of(cells, "rate")), fee=fee,
+                    kwh=kwh, rate=rate, fee=fee, note=note,
                     user_device=_code(tables.text_of(cells, "user_device")),
                     generator_device=_code(tables.text_of(cells, "generator_device")),
                     page=page, box=tables.union([line.box for found in cells.values() for line in found]),
@@ -174,6 +178,7 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
             last = titles[id(page_sections[-1])]
             if last != section:
                 section, meter = last, None
+    _split_rates(result.rows)
     _fix_cells(result.rows)
     _fix_rates(result.rows)
     _fill_meters(result.rows)
@@ -183,6 +188,37 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
 
 def _add_note(row: TransferRow, note: str) -> None:
     row.note = f"{row.note}; {note}" if row.note else note
+
+
+_SPLIT_NOTE = "the rate and the fee were read as one number: split where kWh × rate gives the fee"
+
+
+def split_rate(kwh: Any, rate: Any) -> tuple[float, int] | None:
+    """A rate and the fee beside it read as one number (0.0274 and 647 as 0.0274647).
+
+    Split where kWh × the rate's head gives its tail exactly (Taipower rounds
+    the fee to the NT$); the shortest such rate. A fee's trailing zeros may be
+    lost with the float (0.0274 and 2,740 as 0.027427400 → 0.0274274).
+    """
+    if not isinstance(kwh, int) or kwh <= 0 or not isinstance(rate, float) or not 0 < rate < 1:
+        return None
+    decimals = format(Decimal(str(rate)), "f").split(".")[1]
+    for cut in range(3, len(decimals)):
+        head, tail = Decimal("0." + decimals[:cut]), decimals[cut:]
+        if tail.startswith("0") or head == 0:
+            continue
+        expected = str((kwh * head).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        if expected.startswith(tail) and set(expected[len(tail):]) <= {"0"}:
+            return float(head), int(expected)
+    return None
+
+
+def _split_rates(rows: list[TransferRow]) -> None:
+    """A row with a rate but no fee: the fee may have been read into the rate."""
+    for row in rows:
+        if row.fee is None and (split := split_rate(row.kwh, row.rate)):
+            (row.rate, row.fee) = split
+            _add_note(row, _SPLIT_NOTE)
 
 
 def _fix_cells(rows: list[TransferRow]) -> None:

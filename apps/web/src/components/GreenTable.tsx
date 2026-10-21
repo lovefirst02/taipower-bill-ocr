@@ -272,7 +272,8 @@ function TransferRows({ draft, editable, ourMeters, onChange }: Omit<Props, "vie
                       </td>
                     ))}
                     <td className={`num diff ${check.status}`} title={row.note ? String(row.note) : undefined}>
-                      {mark(check.status, check.difference)}{row.note ? " ✎" : ""}
+                      {/* A fee worked out from kWh × rate agrees with itself: nothing was checked. */}
+                      {String(row.note ?? "").includes("worked out") ? "✎ not checked" : <>{mark(check.status, check.difference)}{row.note ? " ✎" : ""}</>}
                     </td>
                     {editable && (
                       <td>

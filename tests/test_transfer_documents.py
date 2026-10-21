@@ -181,3 +181,17 @@ class NumberTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MergedRateAndFeeTest(unittest.TestCase):
+    def test_a_fee_read_into_the_rate_is_split_back_out(self):
+        from taipower_bill_ocr.transfer_list import split_rate
+
+        # 電力調度費: 0.0274 and the fee beside it read as one number.
+        self.assertEqual(split_rate(23614, 0.0274647), (0.0274, 647))
+        self.assertEqual(split_rate(240000, 0.02746576), (0.0274, 6576))
+        # The fee's trailing zero is lost with the float (2,740).
+        self.assertEqual(split_rate(100000, 0.0274274), (0.0274, 2740))
+        # A long rate on its own stays a rate.
+        self.assertIsNone(split_rate(93219, 0.0274175))
+        self.assertIsNone(split_rate(None, 0.0274647))
