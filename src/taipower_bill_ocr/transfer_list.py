@@ -56,6 +56,8 @@ class TransferRow:
     box: tuple[float, float, float, float] | None = None
     # Why a value was changed from what OCR read.
     note: str | None = None
+    # The user meter was read on this row (not carried down from the row above).
+    meter_read: bool = True
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -139,8 +141,10 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
                 if kwh is None or fee is None:
                     continue
                 # A meter with several generators is written once, on its first row.
-                meter = _digits(tables.text_of(cells, "user_meter")) or meter
+                read = _digits(tables.text_of(cells, "user_meter"))
+                meter = read or meter
                 result.rows.append(TransferRow(
+                    meter_read=bool(read),
                     section=section or "轉供費", user_meter=meter, generator=_digits(tables.text_of(cells, "generator")),
                     kwh=kwh, rate=tables.number(tables.text_of(cells, "rate")), fee=fee,
                     user_device=_code(tables.text_of(cells, "user_device")),
@@ -159,6 +163,7 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
                 # Not carried down: a meter OCR missed must not take the row above's.
                 result.rows.append(TransferRow(
                     section=section or "轉供費", user_meter=cells_line["user_meter"], generator=cells_line["generator"],
+                    meter_read=bool(cells_line["user_meter"]),
                     note=None if cells_line["user_meter"] else "用戶電號 not read: type it in",
                     kwh=cells_line["kwh"], rate=cells_line["rate"], fee=cells_line["fee"],
                     user_device=cells_line["user_device"], generator_device=cells_line["generator_device"],
@@ -169,8 +174,93 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
             last = titles[id(page_sections[-1])]
             if last != section:
                 section, meter = last, None
+    _fix_cells(result.rows)
     _fix_rates(result.rows)
+    _fill_meters(result.rows)
+    _fill_fees(result.rows)
     return result if result.rows else None
+
+
+def _add_note(row: TransferRow, note: str) -> None:
+    row.note = f"{row.note}; {note}" if row.note else note
+
+
+def _fix_cells(rows: list[TransferRow]) -> None:
+    """A rate read into the fee column is put back: a fee is whole NT$, a rate is below 1.
+
+    Rates with many decimals (電力調度 0.0274175) are often read a column off,
+    sometimes without their "0.0" (2741604): such a figure is a rate when it
+    reads like the other rates of its fee table.
+    """
+    for row in rows:
+        if isinstance(row.fee, float) and not row.fee.is_integer() and row.fee < 1 and row.rate is None:
+            row.rate, row.fee = row.fee, None
+            _add_note(row, "the rate was read in the fee column")
+    by_section: dict[str, list[TransferRow]] = {}
+    for row in rows:
+        by_section.setdefault(row.section, []).append(row)
+    for section_rows in by_section.values():
+        rates = sorted(row.rate for row in section_rows if isinstance(row.rate, (int, float)) and 0 < row.rate < 1)
+        if not rates:
+            continue
+        usual = rates[len(rates) // 2]
+        for row in section_rows:
+            if not isinstance(row.fee, int) or not row.kwh or row.fee / row.kwh < 1:
+                continue  # a fee of a few NT$ a kWh at most
+            for prefix in ("0.0", "0."):
+                candidate = float(prefix + str(row.fee))
+                if abs(candidate - usual) <= usual * 0.05:
+                    if row.rate is None:
+                        row.rate = candidate
+                    row.fee = None
+                    _add_note(row, f"the rate {candidate} was read as a whole number in the fee column")
+                    break
+
+
+def _fill_meters(rows: list[TransferRow]) -> None:
+    """A user meter OCR missed is the one of the same generator and kWh in another fee table.
+
+    Every fee table of a list has the same rows (meter, generator, kWh); only
+    a match that is one meter is used, and a meter carried down from the row
+    above gives way to it.
+    """
+    # Meters read on their row first; else carried down (a meter written once for its generators).
+    read: dict[tuple[Any, Any], set[str]] = {}
+    carried: dict[tuple[Any, Any], set[str]] = {}
+    for row in rows:
+        if row.user_meter and row.generator and row.kwh is not None:
+            (read if row.meter_read else carried).setdefault((row.generator, row.kwh), set()).add(row.user_meter)
+    for row in rows:
+        if row.meter_read and row.user_meter:
+            continue
+        key = (row.generator, row.kwh)
+        found = read.get(key) or set()
+        if not found:
+            # Only from another fee table: a row's own carried meter is no evidence for itself.
+            others = {other.user_meter for other in rows if other is not row and other.section != row.section
+                      and (other.generator, other.kwh) == key and other.user_meter}
+            found = others if others <= carried.get(key, set()) else set()
+        if len(found) != 1:
+            continue
+        meter = next(iter(found))
+        if meter != row.user_meter:
+            row.user_meter = meter
+            row.meter_read = True
+            row.note = None if row.note and row.note.startswith("用戶電號 not read") else row.note
+            _add_note(row, "用戶電號 from another fee table of the list (same generator and kWh)")
+
+
+def _fill_fees(rows: list[TransferRow]) -> None:
+    """A fee not read is worked out as kWh × rate, and said so.
+
+    Only from a whole rate: Taipower's have four decimals or more (0.0778,
+    0.0274175); one with digits lost (0.07T8 read as 0.078) is left alone.
+    """
+    for row in rows:
+        whole_rate = row.rate is not None and len(str(row.rate).split(".")[-1]) >= 4
+        if row.fee is None and row.kwh is not None and whole_rate:
+            row.fee = int((Decimal(str(row.kwh)) * Decimal(str(row.rate))).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+            _add_note(row, "fee not read: worked out as kWh × rate — check it on the page")
 
 
 def _section_name(text: str) -> str:

@@ -97,6 +97,37 @@ class TransferListTests(unittest.TestCase):
         # Read on its own, a page without a title or header is not a list.
         self.assertIsNone(read_transfer_list(next_page))
 
+    def test_a_fee_table_with_meters_not_read_and_rates_a_column_off_is_put_right(self):
+        # 電力調度: rates with seven decimals read into the fee column (one without its "0.0"),
+        # and the user meters not read at all.
+        dispatch = [
+            Line("轉供電力調度費清單", 85, 1200, 300, 41), *header(1277),
+            *table(1370, [
+                ("1", "", "", "08376141004", "TI19701899", "26,031", "", "0.0274175"),
+                ("", "", "", "08376175049", "WB20201007", "170,322", "", "2741604"),
+                ("2", "", "", "08376141004", "TI19701899", "2,006", "", "0.0274451"),
+            ]),
+        ]
+        rows = [row for row in read_transfer_list(WIND_LIST + dispatch).rows if row.section == "轉供電力調度費清單"]
+        self.assertEqual([(row.user_meter, row.rate, row.fee) for row in rows], [
+            ("10512918917", 0.0274175, 714),     # 26,031 × 0.0274175
+            ("10512918917", 0.02741604, 4670),   # the rate without its 0.0
+            ("10518691508", 0.0274451, 55),
+        ])
+        self.assertTrue(all("another fee table" in row.note and "worked out" in row.note for row in rows))
+
+    def test_a_meter_carried_down_gives_way_to_the_one_of_its_generator_and_kwh(self):
+        # 配電: the second meter's number was not read, so the row above's was carried down.
+        lines = WIND_LIST + [
+            Line("轉供配电费清單", 85, 1200, 260, 41), *header(1277),
+            *table(1370, [
+                ("1", "10512918917", "WA12001353", "08376141004", "TI19701899", "26,031", "0.1788", "4,654"),
+                ("2", "", "TA20855027", "08376141004", "TI19701899", "2,006", "0.1788", "359"),
+            ]),
+        ]
+        last = read_transfer_list(lines).rows[-1]
+        self.assertEqual((last.user_meter, last.kwh), ("10518691508", 2006))
+
     def test_other_pages_are_not_lists(self):
         self.assertIsNone(read_transfer_list([Line("本月消費明細如下：", 0, 0, 200, 30)]))
 
