@@ -195,3 +195,22 @@ class MergedRateAndFeeTest(unittest.TestCase):
         # A long rate on its own stays a rate.
         self.assertIsNone(split_rate(93219, 0.0274175))
         self.assertIsNone(split_rate(None, 0.0274647))
+
+    def test_a_rate_and_fee_read_as_a_whole_number_in_the_fee_column(self):
+        from taipower_bill_ocr.transfer_list import TransferRow, tidy_rows
+
+        # 0.0274 and 990 read without their "0.0", in the fee column; the rate cell empty.
+        rows = [TransferRow(section="電力調度費清單", user_meter="10512918917", generator="08376141004", kwh=36145, rate=None, fee=274990),
+                TransferRow(section="電力調度費清單", user_meter="10512918917", generator="08376175049", kwh=242478, rate=None, fee=2746644),
+                TransferRow(section="電力調度費清單", user_meter="10518691508", generator="08376141004", kwh=2688, rate=0.0274, fee=74)]
+        tidy_rows(rows)
+        self.assertEqual([(row.rate, row.fee) for row in rows], [(0.0274, 990), (0.0274, 6644), (0.0274, 74)])
+
+    def test_a_whole_table_read_that_way_is_split_too(self):
+        from taipower_bill_ocr.transfer_list import TransferRow, tidy_rows
+
+        # 輔助服務費: no row read right to take the rate from.
+        rows = [TransferRow(section="輔助服務費清單", user_meter="10512918917", generator="08376141004", kwh=36145, rate=None, fee=3641316),
+                TransferRow(section="輔助服務費清單", user_meter="10518691508", generator="08376175049", kwh=18213, rate=None, fee=364663)]
+        tidy_rows(rows)
+        self.assertEqual([(row.rate, row.fee) for row in rows], [(0.0364, 1316), (0.0364, 663)])

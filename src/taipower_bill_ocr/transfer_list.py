@@ -178,12 +178,18 @@ def read_transfer_list(lines: Iterable[Line]) -> TransferList | None:
             last = titles[id(page_sections[-1])]
             if last != section:
                 section, meter = last, None
-    _split_rates(result.rows)
-    _fix_cells(result.rows)
-    _fix_rates(result.rows)
-    _fill_meters(result.rows)
-    _fill_fees(result.rows)
+    tidy_rows(result.rows)
     return result if result.rows else None
+
+
+def tidy_rows(rows: list[TransferRow]) -> None:
+    """Cells OCR put in the wrong place or missed, put right from the rest of the list."""
+    # Rates read into the fee column first (274990 → 0.0274990): the fee may be in them.
+    _fix_cells(rows)
+    _split_rates(rows)
+    _fix_rates(rows)
+    _fill_meters(rows)
+    _fill_fees(rows)
 
 
 def _add_note(row: TransferRow, note: str) -> None:
@@ -214,11 +220,21 @@ def split_rate(kwh: Any, rate: Any) -> tuple[float, int] | None:
 
 
 def _split_rates(rows: list[TransferRow]) -> None:
-    """A row with a rate but no fee: the fee may have been read into the rate."""
+    """A row with a rate but no fee: the fee may have been read into the rate.
+
+    A fee above the kWh is never one (rates are below NT$1): it is the rate
+    and fee without their "0.0" (274990 for 0.0274 and 990).
+    """
     for row in rows:
         if row.fee is None and (split := split_rate(row.kwh, row.rate)):
             (row.rate, row.fee) = split
             _add_note(row, _SPLIT_NOTE)
+        elif isinstance(row.fee, int) and isinstance(row.kwh, int) and row.fee > row.kwh:
+            for prefix in ("0.0", "0."):
+                if split := split_rate(row.kwh, float(prefix + str(row.fee))):
+                    (row.rate, row.fee) = split
+                    _add_note(row, _SPLIT_NOTE)
+                    break
 
 
 def _fix_cells(rows: list[TransferRow]) -> None:
