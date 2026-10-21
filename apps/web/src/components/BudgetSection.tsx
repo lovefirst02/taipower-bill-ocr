@@ -94,7 +94,7 @@ export function BudgetSection({ actuals, year, entity, site }: Props) {
           <div className="green-scroll">
             <table className="dash-table budget-table">
               <thead>
-                <tr><th>{GROUPINGS[grouping]}</th><th>Budget</th><th>Actual</th><th>Variance</th><th>%</th><th aria-label="Actual against budget" /></tr>
+                <tr><th>{GROUPINGS[grouping]}</th><th className="num">Budget</th><th className="num">Actual</th><th className="num">Variance</th><th className="num">%</th><th aria-label="Actual against budget" /></tr>
               </thead>
               <tbody>
                 {[...items, ...(items.length > 1 ? [total] : [])].map((item) => <BudgetLine key={item.name} item={item} unit={metric.unit} total={item === total} />)}

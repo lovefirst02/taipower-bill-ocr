@@ -161,7 +161,7 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
     <div className="green-scroll">
       <table className="dash-table plan-sites">
         <thead>
-          <tr><th>Site</th><th>Entity</th><th title="The site's one budget for the year: shared among its energies">Site annual budget</th>{ENERGIES.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Sum</th><th>Check</th><th>Actual</th><th>Used</th><th>Year-end forecast</th><th>vs budget</th></tr>
+          <tr><th>Site</th><th>Entity</th><th className="num" title="The site's one budget for the year: shared among its energies">Site annual budget</th>{ENERGIES.map(({ key, label }) => <th key={key} className="num">{label}</th>)}<th className="num">Sum</th><th>Check</th><th className="num">Actual</th><th className="num">Used</th><th className="num">Year-end forecast</th><th className="num">vs budget</th></tr>
         </thead>
         <tbody>
           {plan.sites.map((site) => {
@@ -170,10 +170,10 @@ function SitesTable({ plan, year, chosen, onChoose, onSave }: {
               <tr key={site.site} className={site.site === chosen ? "chosen" : ""} onClick={() => onChoose(site.site)}>
                 <td><button type="button" className="link">{site.site}</button></td>
                 <td>{site.entity ?? "—"}</td>
-                <td><input key={`total-${site.total_budget}`} className="num" defaultValue={site.total_budget ?? ""} disabled={!plan.can_edit} placeholder="—"
+                <td className="num"><input key={`total-${site.total_budget}`} className="num" defaultValue={site.total_budget ?? ""} disabled={!plan.can_edit} placeholder="—"
                   onClick={(event) => event.stopPropagation()} onBlur={(event) => saveAnnual(site, "total", event.target.value)} /></td>
                 {ENERGIES.map(({ key }) => (
-                  <td key={key} title={site.energies[key].method === "estimate" ? "Not set: the estimated costs added up"
+                  <td key={key} className="num" title={site.energies[key].method === "estimate" ? "Not set: the estimated costs added up"
                     : site.energies[key].method === "site share" ? "Not set: its share of the site's budget, by the estimated costs" : "Set for this energy"}>
                     <input key={`${key}-${site.energies[key].annual_input}`} className="num" defaultValue={site.energies[key].annual_input ?? ""} disabled={!plan.can_edit}
                       placeholder={money(site.energies[key].annual)} onClick={(event) => event.stopPropagation()}
@@ -249,13 +249,13 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
       <div className="green-scroll">
         <table className="dash-table plan-months">
           <thead>
-            <tr><th />{MONTH_NAMES.map((name) => <th key={name}>{name}</th>)}<th>Year</th></tr>
+            <tr><th />{MONTH_NAMES.map((name) => <th key={name} className="num">{name}</th>)}<th className="num">Year</th></tr>
           </thead>
           <tbody>
             <tr className="input-row">
               <th title="Typed in, or by default last year's actual kWh of the month">Est. kWh</th>
               {plan.months.map((month, index) => (
-                <td key={month.month}>
+                <td key={month.month} className="num">
                   <input className="num" value={kwh[index]} disabled={!canEdit} placeholder={money(month.kwh_source === "manual" ? null : month.kwh)}
                     title={month.kwh_source && month.kwh_source !== "manual" ? `Default: ${SOURCES[month.kwh_source]}` : undefined}
                     onChange={(event) => setKwh(kwh.map((value, at) => (at === index ? event.target.value : value)))} />
@@ -266,7 +266,7 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
             <tr className="input-row">
               <th title="Typed in, or by default: grey last year's average actual price; green the contract (price and fees on top)">Est. price</th>
               {plan.months.map((month, index) => (
-                <td key={month.month}>
+                <td key={month.month} className="num">
                   <input className="num" value={rate[index]} disabled={!canEdit}
                     placeholder={month.rate_source === "manual" || month.rate === null ? "—" : month.rate.toFixed(4)}
                     title={month.rate_source && month.rate_source !== "manual" ? `Default: ${SOURCES[month.rate_source]}` : undefined}

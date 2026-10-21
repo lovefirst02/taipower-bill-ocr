@@ -100,7 +100,7 @@ export function BudgetOverview({ plan, onOpenSite }: Props) {
         <div className="green-scroll">
           <table className="dash-table budget-sites">
             <thead>
-              <tr><th>Site</th><th>Entity</th><th>Budget</th><th>Spent</th><th>Used</th><th aria-label="Spent and forecast against the budget" /><th>Year-end forecast</th><th>vs budget</th><th>Status</th></tr>
+              <tr><th>Site</th><th>Entity</th><th className="num">Budget</th><th className="num">Spent</th><th className="num">Used</th><th aria-label="Spent and forecast against the budget" /><th className="num">Year-end forecast</th><th className="num">vs budget</th><th>Status</th></tr>
             </thead>
             <tbody>
               {view.bySite.map((item) => {

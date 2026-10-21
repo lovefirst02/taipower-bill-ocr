@@ -297,7 +297,8 @@ main { flex: 1; min-width: 0; display: flex; }
 .chart .axis { font-size: 11px; fill: var(--muted); }
 .chart .share { font-size: 11px; fill: var(--ok); font-weight: 600; }
 .dash-table { border-collapse: collapse; font-size: 12px; width: 100%; }
-.dash-table th { text-align: right; color: var(--muted); font-weight: 600; padding: 4px 6px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+/* A header lines up with its column: text to the left, numbers (th.num) to the right. */
+.dash-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; white-space: nowrap; border-bottom: 1px solid var(--border); }
 .dash-table th:first-child, .dash-table td:first-child { text-align: left; }
 .dash-table td { padding: 3px 6px; white-space: nowrap; border-bottom: 1px solid var(--bg); }
 .dash-table .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -354,15 +355,16 @@ main { flex: 1; min-width: 0; display: flex; }
 .verdict.check { color: var(--danger); font-weight: 600; }
 .verdict.muted { color: var(--muted); }
 .planner .over { color: var(--danger); }
-.plan-sites input, .plan-months input { width: 92px; padding: 2px 4px; font: inherit; font-size: 12px; box-sizing: border-box; }
+/* Inputs fill their cell, so they stay under their header at any zoom. */
+.plan-sites input, .plan-months input { width: 100%; min-width: 64px; padding: 2px 4px; font: inherit; font-size: 12px; box-sizing: border-box; text-align: right; }
 .plan-sites input::placeholder, .plan-months input::placeholder { color: #9aa0a6; }
 .plan-sites tr { cursor: pointer; }
 .plan-sites tr.chosen td { background: var(--edited); }
 .plan-months th { text-align: left; white-space: nowrap; }
-.plan-months thead th { text-align: right; }
+.plan-months { table-layout: fixed; min-width: 1100px; }
+.plan-months col.label, .plan-months thead th:first-child { width: 130px; }
 .plan-months td.total { font-weight: 600; border-left: 1px solid var(--border); }
 .plan-months tr.strong td, .plan-months tr.strong th { font-weight: 600; }
-.plan-months input { width: 76px; }
 .plan-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; margin: 6px 0; }
 .plan-controls input.short { width: 60px; margin-left: 4px; }
 .plan-months tr.forecast td, .plan-months tr.forecast th { background: #f3f0ff; }
@@ -409,3 +411,4 @@ main { flex: 1; min-width: 0; display: flex; }
 /* The KPIs and the energy cards are one block. */
 .budget-kpis { display: flex; flex-direction: column; gap: 10px; }
 .plan-sites td:nth-child(3) input { font-weight: 600; border-color: var(--accent); }
+.plan-sites td.num { min-width: 96px; }

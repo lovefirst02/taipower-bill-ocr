@@ -229,9 +229,9 @@ function TotalsTable({ groups, overall, kinds, first }: { groups: [string, MixTo
       <table className="dash-table">
         <thead>
           <tr>
-            <th>{first}</th><th>灰電 kWh</th>{kinds.map((energy) => <th key={energy}>{energy} kWh</th>)}
-            <th>綠電 kWh</th><th>Total kWh</th><th>綠電占比</th><th>灰電費用</th><th>灰電 NT$/kWh</th><th>綠電費用</th><th>綠電 NT$/kWh</th>
-            {kinds.map((energy) => [<th key={`${energy}-cost`}>{energy}費用</th>, <th key={`${energy}-price`}>{energy} NT$/kWh</th>])}
+            <th>{first}</th><th className="num">灰電 kWh</th>{kinds.map((energy) => <th key={energy} className="num">{energy} kWh</th>)}
+            <th className="num">綠電 kWh</th><th className="num">Total kWh</th><th className="num">綠電占比</th><th className="num">灰電費用</th><th className="num">灰電 NT$/kWh</th><th className="num">綠電費用</th><th className="num">綠電 NT$/kWh</th>
+            {kinds.map((energy) => [<th key={`${energy}-cost`} className="num">{energy}費用</th>, <th key={`${energy}-price`} className="num">{energy} NT$/kWh</th>])}
           </tr>
         </thead>
         <tbody>
@@ -278,7 +278,7 @@ function DocumentTable({ documents }: { documents: MixDocument[] }) {
     <div className="green-scroll">
       <table className="dash-table">
         <thead>
-          <tr><th>File</th><th>Type</th><th>Entity</th><th>Period</th><th>Service / 電號</th><th>kWh</th><th>Cost</th><th>of which 餘電</th><th>Counted</th><th>Uploaded by</th></tr>
+          <tr><th>File</th><th>Type</th><th>Entity</th><th>Period</th><th>Service / 電號</th><th className="num">kWh</th><th className="num">Cost</th><th className="num">of which 餘電</th><th>Counted</th><th>Uploaded by</th></tr>
         </thead>
         <tbody>
           {documents.map((doc) => (
@@ -307,8 +307,8 @@ function MeterTable({ rows, kinds }: { rows: MixRow[]; kinds: string[] }) {
       <table className="dash-table">
         <thead>
           <tr>
-            <th>Month</th><th>Site</th><th>電號</th><th>灰電 kWh</th>{kinds.map((energy) => <th key={energy}>{energy} kWh</th>)}
-            <th>綠電占比</th><th>灰電費用</th><th>綠電費用</th><th>Green kWh from</th>
+            <th>Month</th><th>Site</th><th>電號</th><th className="num">灰電 kWh</th>{kinds.map((energy) => <th key={energy} className="num">{energy} kWh</th>)}
+            <th className="num">綠電占比</th><th className="num">灰電費用</th><th className="num">綠電費用</th><th>Green kWh from</th>
           </tr>
         </thead>
         <tbody>

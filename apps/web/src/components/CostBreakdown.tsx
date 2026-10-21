@@ -34,7 +34,7 @@ export function CostBreakdownTable({ cost }: { cost: CostBreakdown }) {
   return (
     <table className="dash-table cost-table">
       <thead>
-        <tr><th>Item</th><th>NT$</th><th>per kWh</th><th>Check</th></tr>
+        <tr><th>Item</th><th className="num">NT$</th><th className="num">per kWh</th><th>Check</th></tr>
       </thead>
       <tbody>
         {items.map((item) => {
@@ -74,9 +74,9 @@ export function CostSummary({ costs, onOpen }: { costs: CostBreakdown[]; onOpen:
       <table className="dash-table cost-summary">
         <thead>
           <tr>
-            <th>Month</th><th>Energy</th><th>Entity</th><th>Document</th><th>kWh</th>
-            {COLUMNS.map((column) => <th key={column.key}>{column.label} /kWh</th>)}
-            <th>合計 /kWh</th>
+            <th>Month</th><th>Energy</th><th>Entity</th><th>Document</th><th className="num">kWh</th>
+            {COLUMNS.map((column) => <th key={column.key} className="num">{column.label} /kWh</th>)}
+            <th className="num">合計 /kWh</th>
           </tr>
         </thead>
         <tbody>
