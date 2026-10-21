@@ -4,18 +4,19 @@ import type { EnergyPlan, Plan, PlanEnergy, PlanMonth, SitePlan } from "./types"
 
 const month = (index: number, values: Partial<PlanMonth>): PlanMonth => ({
   month: `2026-${String(index + 1).padStart(2, "0")}`, kwh: null, kwh_source: null, rate: null, rate_source: null, estimated_cost: 100,
-  planned: 100, actual_kwh: null, actual_cost: null, actual_rate: null, has_actual: false, adopted_cost: 100, prior_carry: 0, available: 100,
+  planned: 100, actual_kwh: null, actual_cost: null, actual_rate: null, actual_source: null, manual_actual_kwh: null,
+  manual_actual_cost: null, status: "to come", has_actual: false, adopted_cost: 100, prior_carry: 0, available: 100,
   balance: 0, forecast_kwh: null, forecast_cost: 100, forecast_source: "estimate", adjusted_budget: null, ...values,
 });
 
 const energy = (key: PlanEnergy, annual: number, actualMonths: number, actual = 120): EnergyPlan => {
   const months = Array.from({ length: 12 }, (_, index) =>
-    month(index, index < actualMonths ? { has_actual: true, actual_cost: actual, forecast_cost: actual } : {}));
+    month(index, index < actualMonths ? { has_actual: true, actual_cost: actual, forecast_cost: actual, actual_source: "document", status: "document" } : {}));
   const spent = actualMonths * actual;
   const yearEnd = months.reduce((sum, item) => sum + (item.forecast_cost ?? 0), 0);
   return {
     energy: key, annual_input: annual, annual, method: "approved", allocation: "estimate", adjustment_pct: 0, months, actual_cost: spent,
-    utilization: spent / annual, forecast: { months_closed: actualMonths, trend: null, price: null, year_end: yearEnd, variance: yearEnd - annual, remaining: annual - spent },
+    utilization: spent / annual, forecast: { months_closed: actualMonths, months_missing: 0, trend: null, price: null, year_end: yearEnd, variance: yearEnd - annual, remaining: annual - spent },
   };
 };
 

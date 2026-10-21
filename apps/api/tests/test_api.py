@@ -1521,7 +1521,11 @@ class ApiTests(unittest.TestCase):
             bill(f"2025-{month}.png", f"114/{month}/01", f"114/{month}/{days}", 15000, 761905)
         for month, days in (("06", 30), ("07", 31)):
             bill(f"2026-{month}.png", f"115/{month}/01", f"115/{month}/{days}", 16500, 900000)  # 10% more kWh
-        grey = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey", "annual_budget": 9000000}).json()["sites"][0]["energies"]["grey"]
+        from taipower_web_api import budget_plan
+
+        # As planned at the start of 2026: every month without a bill is still to come.
+        with mock.patch.object(budget_plan, "_today", lambda: __import__("datetime").date(2026, 1, 1)):
+            grey = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey", "annual_budget": 9000000}).json()["sites"][0]["energies"]["grey"]
         forecast = grey["forecast"]
         self.assertEqual((forecast["months_closed"], forecast["trend"], forecast["price"]), (2, 1.1, round(1800000 / 33000, 4)))
         months = {month["month"][5:]: month for month in grey["months"]}
@@ -1566,6 +1570,27 @@ class ApiTests(unittest.TestCase):
         wind_share = site["energies"]["wind"]["annual"]
         self.assertAlmostEqual(wind_share, 2500000 * 6000 / (grey_estimate + 6000), delta=1)
         self.assertEqual(site["energies"]["grey"]["annual"] + wind_share, 2500000)
+
+    def test_actuals_can_be_typed_in_for_months_without_documents(self):
+        from taipower_web_api import budget_plan
+
+        local = self.plan_setup()  # grey: an August 2026 bill (15,000 kWh, NT$761,905)
+        with mock.patch.object(budget_plan, "_today", lambda: __import__("datetime").date(2026, 10, 21)):
+            grey = local.put("/api/plan", json={"year": 2026, "site": "TNF", "energy": "grey", "annual_budget": 12000000, "months": {
+                "01": {"actual_kwh": 14000, "actual_cost": 700000},     # no document: typed in
+                "08": {"actual_kwh": 1, "actual_cost": 1},             # a document: it wins
+            }}).json()["sites"][0]["energies"]["grey"]
+        months = {month["month"][5:]: month for month in grey["months"]}
+        self.assertEqual((months["01"]["status"], months["01"]["actual_cost"], months["01"]["has_actual"]), ("manual", 700000, True))
+        self.assertEqual((months["08"]["status"], months["08"]["actual_cost"], months["08"]["manual_actual_cost"]), ("document", 761905, 1))
+        # Months gone by with neither are missing; only the months to come get an adjusted budget.
+        self.assertEqual({months[key]["status"] for key in ("02", "03", "09")}, {"missing"})
+        self.assertEqual({months[key]["status"] for key in ("10", "11", "12")}, {"to come"})
+        self.assertTrue(all(months[key]["adjusted_budget"] is None for key in ("01", "02", "08", "09")))
+        missing = sum(months[key]["forecast_cost"] for key in months if months[key]["status"] == "missing")
+        self.assertAlmostEqual(sum(months[key]["adjusted_budget"] for key in ("10", "11", "12")), 12000000 - 700000 - 761905 - missing, delta=2)
+        self.assertEqual(grey["forecast"]["months_missing"], 7)  # Jan-Sep but January (typed in) and August (a bill)
+        self.assertEqual(grey["actual_cost"], 700000 + 761905)
 
     def test_a_budget_plan_round_trips_through_excel(self):
         local = self.plan_setup()

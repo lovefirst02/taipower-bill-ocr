@@ -398,6 +398,13 @@ export interface PlanMonth {
   actual_kwh: number | null;
   actual_cost: number | null;
   actual_rate: number | null;
+  /** Where the actual comes from: a document, or typed in for a month without one. */
+  actual_source: "document" | "manual" | null;
+  /** What was typed in (kept beside a document, to show where they differ). */
+  manual_actual_kwh: number | null;
+  manual_actual_cost: number | null;
+  /** document / manual: in; missing: gone by without figures; to come. */
+  status: "document" | "manual" | "missing" | "to come";
   has_actual: boolean;
   adopted_cost: number;
   prior_carry: number;
@@ -413,6 +420,8 @@ export interface PlanMonth {
 
 export interface PlanForecast {
   months_closed: number;
+  /** Months gone by without a document or typed-in figures. */
+  months_missing: number;
   /** This year's kWh so far ÷ the baseline of the same months; null without actuals. */
   trend: number | null;
   /** This year's actual price so far. */

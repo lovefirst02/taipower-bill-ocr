@@ -218,12 +218,20 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
   const [kwh, setKwh] = useState(plan.months.map((month) => (month.kwh_source === "manual" ? String(month.kwh ?? "") : "")));
   const [rate, setRate] = useState(plan.months.map((month) => (month.rate_source === "manual" ? String(month.rate ?? "") : "")));
   const [adjustment, setAdjustment] = useState(plan.adjustment_pct ? String(plan.adjustment_pct) : "");
+  // Figures typed in for months without a document.
+  const typedOf = (value: number | null) => (value === null ? "" : String(value));
+  const [actualKwh, setActualKwh] = useState(plan.months.map((month) => typedOf(month.manual_actual_kwh)));
+  const [actualCost, setActualCost] = useState(plan.months.map((month) => typedOf(month.manual_actual_cost)));
   const dirty = kwh.some((value, index) => value !== (plan.months[index].kwh_source === "manual" ? String(plan.months[index].kwh ?? "") : ""))
     || rate.some((value, index) => value !== (plan.months[index].rate_source === "manual" ? String(plan.months[index].rate ?? "") : ""))
-    || adjustment !== (plan.adjustment_pct ? String(plan.adjustment_pct) : "");
+    || adjustment !== (plan.adjustment_pct ? String(plan.adjustment_pct) : "")
+    || actualKwh.some((value, index) => value !== typedOf(plan.months[index].manual_actual_kwh))
+    || actualCost.some((value, index) => value !== typedOf(plan.months[index].manual_actual_cost));
   const save = () => onSave({
     year, site: site.site, energy: plan.energy, annual_budget: plan.annual_input, adjustment_pct: number(adjustment) ?? 0,
-    months: Object.fromEntries(plan.months.map((month, index) => [month.month.slice(5), { kwh: number(kwh[index]), rate: number(rate[index]) }])),
+    months: Object.fromEntries(plan.months.map((month, index) => [month.month.slice(5), {
+      kwh: number(kwh[index]), rate: number(rate[index]), actual_kwh: number(actualKwh[index]), actual_cost: number(actualCost[index]),
+    }])),
   }, `${site.site}: ${plan.energy} plan saved`);
   const row = (label: string, values: (number | null)[], title?: string, className = "") => (
     <tr className={className}>
@@ -238,6 +246,7 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
         <span>Annual budget: <strong>NT${money(plan.annual)}</strong> ({{ approved: "set for this energy", "site share": "share of the site's budget", estimate: "estimates added up" }[plan.method]}; {ALLOCATIONS[plan.allocation]})</span>
         <label>Adjustment % <input className="num short" value={adjustment} disabled={!canEdit} placeholder="0" onChange={(event) => setAdjustment(event.target.value)} /></label>
         <span>Used: {plan.utilization === null ? "—" : `${(plan.utilization * 100).toFixed(1)}%`}</span>
+        {plan.forecast.months_missing > 0 && <span className="warn-text">⚠ {plan.forecast.months_missing} month(s) gone by without figures</span>}
         <span title="Months with documents are their actuals; the others are last year's month × this year's trend (else this year's average month, else the estimate), at this year's actual price">
           Year-end forecast: <strong className={plan.forecast.variance > 0 ? "over" : ""}>NT${money(plan.forecast.year_end)}</strong>
           {" "}({plan.forecast.variance > 0 ? "+" : ""}{money(plan.forecast.variance)} vs budget
@@ -250,6 +259,17 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
         <table className="dash-table plan-months">
           <thead>
             <tr><th />{MONTH_NAMES.map((name) => <th key={name} className="num">{name}</th>)}<th className="num">Year</th></tr>
+            <tr className="status-row">
+              <th title="Bill: from a document; manual: typed in below; missing: gone by without figures (still estimated)">Data</th>
+              {plan.months.map((month) => (
+                <td key={month.month} className={`num month-status ${month.status.replace(" ", "-")}`}
+                  title={month.status === "document" && month.manual_actual_cost !== null && month.manual_actual_cost !== month.actual_cost
+                    ? `Typed in ${money(month.manual_actual_cost)}; the document's ${money(month.actual_cost)} is used` : undefined}>
+                  {{ document: "📄 Bill", manual: "✎ Manual", missing: "⚠ Missing", "to come": "" }[month.status]}
+                </td>
+              ))}
+              <td />
+            </tr>
           </thead>
           <tbody>
             <tr className="input-row">
@@ -284,8 +304,20 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
               {plan.months.map((month) => <td key={month.month} className="num">{month.adjusted_budget === null ? "" : money(month.adjusted_budget)}</td>)}
               <td className="num total">{money(plan.forecast.remaining)}</td>
             </tr>
-            {row("Actual kWh", plan.months.map((month) => month.actual_kwh), "From the documents")}
-            {row("Actual cost", plan.months.map((month) => month.actual_cost), "From the documents")}
+            {([["Actual kWh", actualKwh, setActualKwh, "actual_kwh"], ["Actual cost", actualCost, setActualCost, "actual_cost"]] as const).map(([label, values, setValues, key]) => (
+              <tr key={label} className="input-row">
+                <th title="From the documents; a month without one can be typed in (a document, once in, takes over)">{label}</th>
+                {plan.months.map((month, index) => (
+                  <td key={month.month} className={`num ${month.status === "manual" ? "manual" : ""}`}>
+                    {month.status === "document" ? money(month[key]) : (
+                      <input className="num" value={values[index]} disabled={!canEdit} placeholder="—"
+                        onChange={(event) => setValues(values.map((value, at) => (at === index ? event.target.value : value)))} />
+                    )}
+                  </td>
+                ))}
+                <td className="num total">{money(plan.months.reduce((sum, month) => sum + (month[key] ?? 0), 0))}</td>
+              </tr>
+            ))}
             {row("Adopted cost", plan.months.map((month) => month.adopted_cost), "The actual cost when there is one, else the estimate")}
             <tr>
               <th title="January 0, then last month's balance">Prior carry</th>
@@ -307,7 +339,8 @@ function MonthsTable({ year, site, plan, canEdit, onSave }: {
       </div>
       <p className="hint">
         Grey numbers in the inputs are the defaults (hover for where they come from); type to override, clear to go back to the default.
-        Months with documents use the actual cost; the others the estimate. A negative balance (red) is over budget.
+        Actuals come from the documents; for a month without one they can be typed in (marked ✎ — a document, once in, takes over).
+        Months gone by without figures are ⚠ missing: still estimated, but given no adjusted budget. A negative balance (red) is over budget.
       </p>
     </>
   );

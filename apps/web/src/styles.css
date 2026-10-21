@@ -412,3 +412,9 @@ main { flex: 1; min-width: 0; display: flex; }
 .budget-kpis { display: flex; flex-direction: column; gap: 10px; }
 .plan-sites td:nth-child(3) input { font-weight: 600; border-color: var(--accent); }
 .plan-sites td.num { min-width: 96px; }
+.plan-months .month-status { font-size: 11px; font-weight: 600; }
+.plan-months .month-status.document { color: var(--ok); }
+.plan-months .month-status.manual { color: var(--accent); }
+.plan-months .month-status.missing { color: var(--warn); background: #fff8e6; }
+.plan-months td.manual input { border-color: var(--accent); background: var(--edited); }
+.plan-controls .warn-text { color: var(--warn); }

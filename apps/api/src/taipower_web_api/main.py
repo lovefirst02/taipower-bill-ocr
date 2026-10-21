@@ -134,6 +134,9 @@ class ContractsUpdate(BaseModel):
 class PlanMonth(BaseModel):
     kwh: float | None = None
     rate: float | None = None
+    # Typed in for a month without a document.
+    actual_kwh: float | None = None
+    actual_cost: float | None = None
 
 
 class PlanUpdate(BaseModel):
