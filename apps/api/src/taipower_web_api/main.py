@@ -225,7 +225,7 @@ def create_app(
     store = Store(settings.database)
     worker = OcrWorker(store, settings, extractor_factory)
     writer = WorkbookWriter(store, settings.output_dir, settings.workbook_retry_seconds, settings.per_user_workbooks, settings.green_tolerance)
-    writer.services = mix.parse_services(settings.green_services)
+    writer.services = mix.parse_services(settings.green_services, settings.green_pooled)
     # Choosing a free evidence file name and writing it is one step.
     evidence_lock = threading.Lock()
 
@@ -418,7 +418,7 @@ def create_app(
     def dashboard(submitted_only: bool = False) -> dict[str, Any]:
         """Grey and green power per month and meter, for every user's documents."""
         pages = store.pages(bills_only=True, submitted_only=submitted_only, visible_only=True)
-        return {**mix.energy_mix(pages, store, mix.parse_services(settings.green_services)), "costs": costs.breakdowns(store)}
+        return {**mix.energy_mix(pages, store, mix.parse_services(settings.green_services, settings.green_pooled)), "costs": costs.breakdowns(store)}
 
     # ----------------------------------------------------------------- sites
     @app.get("/api/sites")
@@ -460,7 +460,7 @@ def create_app(
 
     # ------------------------------------------------------- budget planning
     def services_energy() -> dict[str, str]:
-        return mix.parse_services(settings.green_services)
+        return mix.parse_services(settings.green_services, settings.green_pooled)
 
     @app.get("/api/plan")
     def budget_plan_view(year: int, request: Request) -> dict[str, Any]:
@@ -919,7 +919,7 @@ def create_app(
     def export(user: str) -> Response:
         pages = list(store.pages(user=_clean_user(user), bills_only=True, visible_only=True))
         return Response(
-            export_workbook(pages, store, settings.green_tolerance, mix.parse_services(settings.green_services)),
+            export_workbook(pages, store, settings.green_tolerance, mix.parse_services(settings.green_services, settings.green_pooled)),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers=_attachment("taipower_bills_mine.xlsx"),
         )
@@ -981,7 +981,7 @@ def create_app(
         writer.per_user = settings.per_user_workbooks
         writer.retry_seconds = settings.workbook_retry_seconds
         writer.tolerance = settings.green_tolerance
-        writer.services = mix.parse_services(settings.green_services)
+        writer.services = mix.parse_services(settings.green_services, settings.green_pooled)
         if "ocr_backend" in changed:
             worker.reload_engine()
         locked = writer.write_all() if changed & {"output_dir", "workbooks"} else []

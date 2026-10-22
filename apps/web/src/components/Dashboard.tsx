@@ -321,7 +321,9 @@ function MeterTable({ rows, kinds }: { rows: MixRow[]; kinds: string[] }) {
               {kinds.map((energy) => <td key={energy} className="num">{row.green_kwh[energy] ? kwh(row.green_kwh[energy]) : ""}</td>)}
               <td className="num">{percent(row.green_share)}</td>
               <td className="num">{money(row.grey_cost)}</td>
-              <td className="num">{money(row.green_cost)}</td>
+              <td className="num" title={row.green_cost_pooled ? "Shared within the Entity at its average price (Settings)" : undefined}>
+                {money(row.green_cost)}{row.green_cost_pooled ? " ⇄" : ""}
+              </td>
               <td>{row.green_source ? SOURCES[row.green_source] : ""}</td>
             </tr>
           ))}

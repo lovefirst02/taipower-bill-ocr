@@ -326,6 +326,8 @@ export interface SettingsValues {
   green_tolerance: number;
   /** "1-11210-08-00210 太陽能": which energy each transfer service delivers. */
   green_services: string[];
+  /** Energies (風力) whose cost is shared among an Entity's meters at its average price. */
+  green_pooled: string[];
   company_names: string[];
   self_terms: string[];
   period_keywords: string[];
@@ -354,6 +356,8 @@ export interface MixRow {
   /** The green cost by energy (太陽能, 風力 ...), for each one's own price. */
   green_cost_by_energy: Record<string, number>;
   green_source: "transfer_list" | "statement" | "bill" | null;
+  /** The green cost is the Entity's average price × this meter's kWh (Settings). */
+  green_cost_pooled?: boolean;
 }
 
 /** What one document adds to the dashboard. */

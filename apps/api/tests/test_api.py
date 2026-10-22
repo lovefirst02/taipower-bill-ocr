@@ -1236,6 +1236,32 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(saved["green"]["charges_check"]["difference"], -571)
         self.assertTrue(any("Total" in issue["zh"] for issue in saved["issues"]))
 
+    def test_wind_cost_can_be_shared_within_each_entity(self):
+        local = self.local_client()
+        tw21 = local.put("/api/entities", json={"entities": [{"name": "ASML TW21", "code": "TW21"}]}).json()[0]["id"]
+        self.save_sites([{"name": "LF", "entity_id": tw21, "meters": ["10512918917"]},
+                         {"name": "LKO", "entity_id": tw21, "meters": ["10512918918"]}])
+        page = green_statement()  # 917: 278,623 kWh, NT$1,701,285 with 餘電加收; 918: 120,208 kWh, NT$745,913
+        page.ocr_lines.append(OcrLine("計費期間：113/01/01~113/01/31", 40, 150, 400, 34, None))
+        self.upload_as("wind.png", page)
+
+        def costs():
+            rows = self.client.get("/api/dashboard").json()["rows"]
+            return {row["meter"]: row for row in rows}
+
+        # By default each meter costs what its statement lines say.
+        rows = costs()
+        self.assertEqual((rows["10512918917"]["green_cost"], rows["10512918918"]["green_cost"]), (1701285, 745913))
+        self.assertFalse(rows["10512918917"]["green_cost_pooled"])
+        # Shared: the Entity's average price for every meter; the total stays.
+        self.assertEqual(local.put("/api/settings", json={"values": {"green_pooled": ["風力"]}}).status_code, 200)
+        rows = costs()
+        first, second = rows["10512918917"], rows["10512918918"]
+        self.assertAlmostEqual(first["green_cost"] + second["green_cost"], 2447198, places=2)
+        self.assertAlmostEqual(first["green_cost"] / 278623, second["green_cost"] / 120208, places=4)
+        self.assertEqual(first["green_cost_by_energy"]["風力"], first["green_cost"])
+        self.assertTrue(first["green_cost_pooled"])
+
     def test_a_statements_fees_on_a_page_of_their_own_are_read(self):
         def charges_page():
             # The table ended on page 1; page 2 has only the fees, tax and total.

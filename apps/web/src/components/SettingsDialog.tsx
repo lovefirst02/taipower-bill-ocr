@@ -14,6 +14,7 @@ const ENV_NAMES: Record<keyof SettingsValues, string> = {
   port: "TAIPOWER_PORT",
   green_tolerance: "TAIPOWER_GREEN_TOLERANCE",
   green_services: "TAIPOWER_GREEN_SERVICES",
+  green_pooled: "TAIPOWER_GREEN_POOLED",
   highlight_color: "TAIPOWER_HIGHLIGHT_COLOR",
   label_color: "TAIPOWER_LABEL_COLOR",
   company_names: "TAIPOWER_COMPANY_NAMES",
@@ -283,6 +284,27 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
               </span>
             )}
           </label>
+          <div className="setting">
+            <span>Share green cost within each Entity</span>
+            <span className="checks">
+              {["風力", "太陽能"].map((energy) => (
+                <label key={energy}>
+                  <input type="checkbox" checked={values.green_pooled.includes(energy)} disabled={disabled("green_pooled")}
+                    onChange={(event) => set("green_pooled", event.target.checked
+                      ? [...values.green_pooled, energy]
+                      : values.green_pooled.filter((item) => item !== energy))} />
+                  {energy}
+                </label>
+              ))}
+            </span>
+            {lockNote("green_pooled") ?? (
+              <span className="hint">
+                Ticked: the energy&apos;s cost is shared among an Entity&apos;s meters by kWh, at the Entity&apos;s average price — a surcharge
+                (餘電加收) or fee on a few meters is not theirs alone. The Entity&apos;s total stays as billed; sites and budgets use the shared figures.
+                Unticked: each meter costs what its statement lines say (purchase notices are always shared by kWh).
+              </span>
+            )}
+          </div>
         </section>
 
         <section>

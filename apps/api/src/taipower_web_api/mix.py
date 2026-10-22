@@ -50,9 +50,21 @@ def energy_name(text: Any) -> str:
     return value
 
 
-def parse_services(lines: Iterable[str]) -> dict[str, str]:
-    """Settings lines "1-11210-08-00210 太陽能" as {service: energy}."""
-    services = {}
+class GreenServices(dict):
+    """{service: energy}, and the energies whose cost is shared within each Entity."""
+
+    pooled: frozenset[str] = frozenset()
+
+
+def parse_services(lines: Iterable[str], pooled: Iterable[str] = ()) -> GreenServices:
+    """Settings lines "1-11210-08-00210 太陽能" as {service: energy}.
+
+    ``pooled``: energies (風力) whose cost is shared among an Entity's meters
+    by kWh, at the Entity's average price, instead of as each meter's
+    statement lines say.
+    """
+    services = GreenServices()
+    services.pooled = frozenset(energy_name(energy) for energy in pooled if str(energy).strip())
     for line in lines:
         parts = str(line).split(None, 1)
         if len(parts) == 2:
@@ -267,6 +279,40 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
             counted.update(counted_kwh=_plain(ours_kwh), counted_cost=_plain(total),
                            unit_price=float(round(cost / bought, 6)) if bought else None)
 
+    def green_kwh_of(item: Mapping[str, Any]) -> dict[str, Decimal]:
+        if item["list"]:
+            return dict(item["list"])
+        if item["statement"]:
+            return dict(item["statement"])
+        return {UNCLASSIFIED: item["bill_green_kwh"]} if item["bill_green_kwh"] else {}
+
+    # Energies shared within each Entity (Settings): one average price for
+    # every meter of the company, so a surcharge on a few meters is not
+    # theirs alone. The company's total stays as billed.
+    pooled = getattr(service_energy, "pooled", frozenset())
+    for energy in sorted(pooled):
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for (month, meter), item in entries.items():
+            if item["entity"] and not meter.startswith(("#", "服務")):
+                groups[(month, item["entity"])].append(item)
+        for (month, entity), items in sorted(groups.items()):
+            cost = sum((item["cost_by_energy"].get(energy, Decimal(0)) for item in items), Decimal(0))
+            kwh = {id(item): green_kwh_of(item).get(energy, Decimal(0)) for item in items}
+            whole = sum(kwh.values(), Decimal(0))
+            if not cost or not whole:
+                continue
+            shares = {id(item): (cost * kwh[id(item)] / whole).quantize(Decimal("0.01")) for item in items}
+            largest = max(items, key=lambda item: kwh[id(item)])
+            shares[id(largest)] += cost - sum(shares.values())
+            for item in items:
+                before = item["cost_by_energy"].get(energy, Decimal(0))
+                if shares[id(item)] == before:
+                    continue
+                item["cost_by_energy"][energy] = shares[id(item)]
+                item["green_cost"] = (item["green_cost"] or Decimal(0)) + shares[id(item)] - before
+                item["pooled"] = True
+        notes.append(f"{energy}: cost shared within each Entity by kWh, at the Entity's average price (Settings)")
+
     rows = []
     for (month, meter), item in sorted(entries.items()):
         if item["list"]:
@@ -294,6 +340,8 @@ def energy_mix(pages: Iterable[Mapping[str, Any]], store: Store, service_energy:
             "green_cost": _plain(item["green_cost"]),
             "green_cost_by_energy": {energy: _plain(cost) for energy, cost in sorted(item["cost_by_energy"].items()) if cost},
             "green_source": source,
+            # The green cost is the Entity's average price × this meter's kWh (Settings).
+            "green_cost_pooled": bool(item.get("pooled")),
         })
     return {
         "rows": rows,

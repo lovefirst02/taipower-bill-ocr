@@ -55,6 +55,7 @@ EDITABLE: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "port": ("TAIPOWER_PORT", int),
     "green_tolerance": ("TAIPOWER_GREEN_TOLERANCE", float),
     "green_services": ("TAIPOWER_GREEN_SERVICES", _lines),
+    "green_pooled": ("TAIPOWER_GREEN_POOLED", _words),
     "highlight_color": ("TAIPOWER_HIGHLIGHT_COLOR", lambda value: str(value).strip().lower()),
     "label_color": ("TAIPOWER_LABEL_COLOR", lambda value: str(value).strip().lower()),
     **{key: (f"TAIPOWER_{key.upper()}", _words) for key in KEYWORD_SETTINGS},
@@ -88,6 +89,9 @@ class Settings:
     green_tolerance: float = 3
     # Which energy each transfer service (服務編號) delivers: "1-11210-08-00210 太陽能".
     green_services: list[str] = field(default_factory=list)
+    # Energies (風力) whose cost is shared among an Entity's meters by kWh, at
+    # the Entity's average price, instead of as each statement line says.
+    green_pooled: list[str] = field(default_factory=list)
     # Evidence marks without a colour of their own: highlighter and red pen.
     highlight_color: str = "#ffeb3b"
     label_color: str = "#d32f2f"
@@ -122,6 +126,8 @@ class Settings:
             raise ValueError("green power tolerance must be between 0 and 100000 NT$")
         if len(self.green_services) > 200 or any(len(line.split()) < 2 or len(line) > 80 for line in self.green_services):
             raise ValueError("green power services: one per line, a service number then its energy, e.g. 1-11210-08-00210 太陽能")
+        if len(self.green_pooled) > 10 or any(len(energy) > 20 for energy in self.green_pooled):
+            raise ValueError("energies shared within an Entity: at most 10, e.g. 風力")
         for name in ("highlight_color", "label_color"):
             if not COLOR.match(getattr(self, name)):
                 raise ValueError(f"{name.replace('_', ' ')} must look like #ffeb3b")

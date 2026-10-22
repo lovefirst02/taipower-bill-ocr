@@ -418,3 +418,5 @@ main { flex: 1; min-width: 0; display: flex; }
 .plan-months .month-status.missing { color: var(--warn); background: #fff8e6; }
 .plan-months td.manual input { border-color: var(--accent); background: var(--edited); }
 .plan-controls .warn-text { color: var(--warn); }
+.setting .checks { display: flex; gap: 16px; }
+.setting .checks label { display: inline-flex; align-items: center; gap: 4px; }
