@@ -155,6 +155,25 @@ class WrappedPeriodTests(unittest.TestCase):
         ]
         self.assertIsNone(bill_to_record(parse_bill_layout(lines), "a.pdf").row["Billing Period 計費期間"])
 
+    def test_the_end_in_pieces_at_two_heights_comes_together(self):
+        period = self.period_of(
+            word("115年07月01日至11", 120, 98),
+            word("5", 120, 110), word("07", 140, 110), word("31", 170, 110),
+            word("年", 130, 116), word("月", 160, 116), word("日", 190, 116),
+        )
+        self.assertEqual(period, "115/07/01~115/07/31")
+
+    def test_the_reading_date_under_the_pieces_stays_out_of_them(self):
+        lines = [
+            OcrLine("115年07月01日至11", 180, 98, 140, 12),
+            OcrLine("5", 180, 110, 10, 12), OcrLine("07", 200, 110, 20, 12), OcrLine("31", 230, 110, 20, 12),
+            OcrLine("年", 190, 113, 10, 12), OcrLine("月", 220, 113, 10, 12), OcrLine("日", 250, 113, 10, 12),
+            OcrLine("115年08月01日", 180, 126, 120, 12), OcrLine("本次抄表日:", 50, 126, 90, 12),
+        ]
+        texts = [line.text for line in _join_wrapped_period(lines)]
+        self.assertIn("115年07月01日至115年07月31日", texts)
+        self.assertIn("115年08月01日", texts)
+
     def test_the_year_lost_at_the_break_comes_from_the_start(self):
         lines = [OcrLine("115年07月01日至", 180, 98, 120, 12), OcrLine("5年07月31日", 180, 110, 80, 12)]
         self.assertEqual([line.text for line in _join_wrapped_period(lines)], ["115年07月01日至115年07月31日"])

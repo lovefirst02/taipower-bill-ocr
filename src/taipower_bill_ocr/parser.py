@@ -1430,6 +1430,7 @@ _PERIOD_START = re.compile(_ROC_DATE + r"[至~～\-－]$")
 _PERIOD_END = re.compile(r"^" + _ROC_DATE + r"$")
 _WRAPPED_START = re.compile(_ROC_DATE + r"(?:[至~～\-－]\d{0,3}年?\d{0,2}月?)?$")
 _WRAPPED_REST = re.compile(r"[至~～\-－]?\d{0,3}")
+_DATE_PIECE = re.compile(r"[\d年月日]+")
 
 
 # Charges print one decimal and rates four: three after a point is a thousands
@@ -1476,12 +1477,18 @@ def _join_wrapped_period(lines: list[OcrLine]) -> list[OcrLine]:
                         and abs(other.x - line.x) < line.height * 2), key=lambda other: other.y)
         if below and _on_reading_row(below[0], lines):
             continue
-        attempts = [([line, *rest, *below[:1]], None), ([line, *below[:1]], None)]
+        end = below[:1]
+        # Figures and words in two fonts sit at two heights: 5, 07, 31 and a little lower 年, 月, 日.
+        if below and _DATE_PIECE.fullmatch(flat(below[0])):
+            end = sorted((other for other in lines if _DATE_PIECE.fullmatch(flat(other))
+                          and 0 <= other.y - below[0].y < below[0].height * 0.8
+                          and line.x - line.height * 2 < other.x < line.x + line.width), key=lambda other: other.x)
+        attempts = [([line, *rest, *end], None), ([line, *end], None)]
         # The "11" of the end's year can go unread at the break: the start says what it was.
         head = re.sub(r"\d{1,3}$", "", "".join(flat(part) for part in (line, *rest)))
-        start, tail = _PERIOD_START.search(head), re.match(r"\d{0,3}年(.*)", flat(below[0])) if below else None
+        start, tail = _PERIOD_START.search(head), re.match(r"\d{0,3}年(.*)", "".join(flat(part) for part in end))
         if start and tail:
-            attempts.append(([line, *rest, below[0]], f"{head}{start.group(1)}年{tail.group(1)}"))
+            attempts.append(([line, *rest, *end], f"{head}{start.group(1)}年{tail.group(1)}"))
         for parts, spelled in attempts:
             joined = spelled or "".join(flat(part) for part in parts)
             match = _PERIOD.search(joined)
