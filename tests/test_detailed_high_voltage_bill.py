@@ -399,3 +399,58 @@ class DetailedHighVoltageBillTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LabelsAndPageFallbackTest(unittest.TestCase):
+    def test_other_wordings_of_the_kwh_rows_mean_the_same(self):
+        from taipower_bill_ocr.parser import _canonical_label
+
+        reword = lambda text: _canonical_label(OcrLine(text, 0, 0, 10, 10)).text
+        self.assertEqual(reword("尖峰用電度數"), "尖峰度數")
+        self.assertEqual(reword("週六半尖峰用電度數"), "週六半尖峰度數")
+        self.assertEqual(reword("本期轉供度數(度)"), "轉供度數(度)")
+        self.assertEqual(reword("用電度數(度)"), "計費度數(度)")
+        # Not a current figure: left as printed.
+        self.assertEqual(reword("前期轉供度數"), "前期轉供度數")
+        self.assertEqual(reword("去年同期用電度數"), "去年同期用電度數")
+
+    def test_a_meter_and_period_without_their_labels_are_found_by_their_look(self):
+        lines = [OcrLine("45-09-1391-16-5", 89, 516, 282, 31), OcrLine("109/12/01~", 470, 1730, 150, 28), OcrLine("109/12/31", 470, 1760, 140, 28)]
+        result = parse_bill_layout(lines)
+        self.assertEqual(result["user_info"]["customer_number"], "45-09-1391-16-5")
+        self.assertEqual(result["user_info"]["billing_period"], {"start": "109/12/01", "end": "109/12/31"})
+
+    def test_two_different_meters_are_not_guessed_between(self):
+        lines = [OcrLine("45-09-1391-16-5", 89, 516, 282, 31), OcrLine("45-09-1391-16-6", 89, 716, 282, 31)]
+        self.assertFalse((parse_bill_layout(lines).get("user_info") or {}).get("customer_number"))
+
+    def test_a_thousands_comma_read_as_a_point_is_put_back(self):
+        from taipower_bill_ocr.parser import _canonical_label
+
+        reword = lambda text: _canonical_label(OcrLine(text, 0, 0, 10, 10)).text
+        self.assertEqual(reword("2.068.925元"), "2,068,925元")
+        self.assertEqual(reword("2068.925"), "2068,925")
+        self.assertEqual(reword("***1.725.965元"), "***1,725,965元")
+        # A charge's one decimal and a rate's four stay.
+        self.assertEqual(reword("634220.0元"), "634220.0元")
+        self.assertEqual(reword("2.6639"), "2.6639")
+
+    def test_a_garbled_heading_is_known_by_its_english_half(self):
+        from taipower_bill_ocr.parser import _canonical_label
+
+        self.assertTrue(_canonical_label(OcrLine("1費度()/Energy Consumption(kWh)", 0, 0, 10, 10)).text.startswith("計費度數"))
+
+    def test_kwh_rows_without_their_headings_are_billed_then_transferred(self):
+        rows = [("尖峰度數", "8000", 100), ("半尖峰度數", "3000", 130), ("離峰度數", "1000", 160),
+                ("尖峰度數", "700", 220), ("半尖峰度數", "600", 250), ("離峰度數", "500", 280)]
+        lines = [OcrLine("用戶資訊", 50, 40, 200, 30)]
+        for label, value, y in rows:
+            lines += [OcrLine(label, 60, y, 120, 26), OcrLine(value, 400, y, 80, 26)]
+        result = parse_bill_layout(lines)
+        self.assertEqual(result.get("user_info.energy_consumption.peak_kwh"), 8000)
+        self.assertEqual(result.get("user_info.transferred_energy.off_peak_kwh"), 500)
+
+    def test_a_reading_and_a_charge_date_are_not_a_period(self):
+        result = parse_bill_layout([OcrLine("113/04/10~113/04/16", 100, 100, 300, 30)])
+        self.assertFalse((result.get("user_info") or {}).get("billing_period"))
+

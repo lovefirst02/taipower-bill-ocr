@@ -13,6 +13,8 @@ dist/
 samples/
 tmp/
 .venv-build/
+.venv-reader/
+models/
 data/
 apps/web/node_modules/
 apps/web/dist/

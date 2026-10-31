@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
@@ -37,6 +38,8 @@ _BLOCK_TITLES = {
 }
 
 
+# A page straighter than this needs nothing done; beyond the other it is no slant.
+MIN_SKEW_DEGREES, MAX_SKEW_DEGREES = 0.2, 15.0
 DETECTION_MODEL = "PP-OCRv6_small_det"
 RECOGNITION_MODEL = "PP-OCRv6_small_rec"
 
@@ -229,6 +232,24 @@ def _recognize_paddle_blocks(
 
         lines: list[OcrLine] = []
         words_by_block: dict[str, list[OcrLine]] = {}
+        if getattr(engine, "reads_whole_page", False):
+            # Fast engines look at the page once and share the lines out by where they are.
+            import numpy as np
+
+            page = np.ascontiguousarray(np.asarray(image)[:, :, ::-1])
+            found = list(_iter_paddle_lines(engine.predict(page), score_threshold))
+            for block_key, (left, top, right, bottom) in detected.items():
+                lines.append(OcrLine(_BLOCK_TITLES[block_key], left, top, right - left, max(1, round((bottom - top) * 0.04)), block_key))
+                inside = [
+                    OcrLine(line.text, line.x, line.y, line.width, line.height, block_key)
+                    for line in found
+                    if left <= line.x + line.width / 2 <= right and top <= line.y + line.height / 2 <= bottom
+                ]
+                lines.extend(inside)
+                words_by_block[block_key] = inside
+            bounds = {key: {"x": left, "y": top, "width": right - left, "height": bottom - top}
+                      for key, (left, top, right, bottom) in detected.items()}
+            return lines, bounds, words_by_block, document_type, detection_method
         with TemporaryDirectory(prefix="taipower_paddle_blocks_") as temp_dir:
             for block_key, (left, top, right, bottom) in detected.items():
                 title = _BLOCK_TITLES[block_key]
@@ -407,11 +428,45 @@ def extract_bill_with_paddleocr(
     score_threshold: float = 0.0,
     ocr_engine: Any | None = None,
 ) -> BillResult:
-    """OCR one bill image with PaddleOCR and return the existing BillResult schema."""
+    """OCR one bill image and return the BillResult schema, straightening it first if the engine can.
+
+    Rows are matched by height, so a slanted photo pairs labels with the row
+    above or below. The page is read straightened; the lines are then put back
+    where they are on the page as it was given, for the evidence marks.
+    """
     path = Path(image_path).resolve()
     if not path.is_file():
         raise FileNotFoundError(path)
     engine = ocr_engine or _create_paddle_engine(language)
+    angle = engine.page_angle(path) if hasattr(engine, "page_angle") else 0.0
+    if abs(angle) < MIN_SKEW_DEGREES or abs(angle) > MAX_SKEW_DEGREES:
+        return _extract_straight_bill(path, language=language, score_threshold=score_threshold, engine=engine)
+    with Image.open(path) as source:
+        page = ImageOps.exif_transpose(source).convert("RGB")
+    with TemporaryDirectory(prefix="taipower_straight_") as folder:
+        straight = Path(folder) / "page.png"
+        page.rotate(angle, resample=Image.Resampling.BICUBIC, fillcolor=(255, 255, 255)).save(straight)
+        result = _extract_straight_bill(straight, language=language, score_threshold=score_threshold, engine=engine)
+    centre_x, centre_y = page.width / 2, page.height / 2
+    radians = math.radians(angle)
+    cos, sin = math.cos(radians), math.sin(radians)
+    moved = []
+    for line in result.ocr_lines:
+        dx, dy = line.x + line.width / 2 - centre_x, line.y + line.height / 2 - centre_y
+        moved.append(OcrLine(line.text, centre_x + dx * cos - dy * sin - line.width / 2,
+                             centre_y + dx * sin + dy * cos - line.height / 2, line.width, line.height, line.block_key))
+    result.ocr_lines = moved
+    result["quality"]["straightened_degrees"] = round(angle, 2)
+    return result
+
+
+def _extract_straight_bill(
+    path: Path,
+    *,
+    language: str,
+    score_threshold: float,
+    engine: Any,
+) -> BillResult:
     (
         lines,
         bounds,

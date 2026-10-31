@@ -309,6 +309,8 @@ def bill_to_record(
     # Parser warnings are already English codes describing inferred values.
     issues.extend(
         Issue(warning, warning) for warning in bill.get("quality.warnings") or []
+        # How the page was laid out, not whether its values are right.
+        if warning != "legacy_virtual_blocks"
     )
     row["來源檔案"] = source
     row["頁碼"] = bill.get("quality.page_number")

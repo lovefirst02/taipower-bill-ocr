@@ -1411,7 +1411,129 @@ def _parse_detailed_high_voltage_layout(lines: list[OcrLine]) -> BillResult:
     )
 
 
+# Other printed wordings of the kWh rows and their headings.
+_LABEL_WORDINGS = (
+    (re.compile(r"^(經常尖峰|週六半尖峰|半尖峰|尖峰|離峰|經常)用電度數"), r"\1度數"),
+    (re.compile(r"^(?:本期|本月|當期)?轉供(?:電量|電度|度數)"), "轉供度數"),
+    (re.compile(r"^(?:本期|本月|當期)?(?:用電度數|計費電度)(?=[(（]度[)）]|/?Energy)"), "計費度數"),
+)
+_METER = re.compile(r"(?<!\d)\d{2}-\d{2}-\d{4}-\d{2}-\d(?!\d)")
+_ROC_DATE = r"(\d{2,3})[/.年](\d{1,2})[/.月](\d{1,2})日?"
+_PERIOD = re.compile(_ROC_DATE + r"[至~～\-－]" + _ROC_DATE)
+_PERIOD_START = re.compile(_ROC_DATE + r"[至~～\-－]$")
+_PERIOD_END = re.compile(r"^" + _ROC_DATE + r"$")
+
+
+# Charges print one decimal and rates four: three after a point is a thousands
+# comma misread (2.068.925, or 2068.925 with one of them lost).
+_POINT_FOR_COMMA = re.compile(r"^(\*{0,6})(\d{1,3}(?:\.\d{3}){2,}|\d{4,}\.\d{3})(元?)$")
+
+
+def _canonical_label(line: OcrLine) -> OcrLine:
+    text = re.sub(r"\s+", "", line.text)
+    # The English half of the heading survives what garbles its Chinese.
+    if re.search(r"Energy\s*Consum", text, re.IGNORECASE) and not text.startswith("計費度數"):
+        return OcrLine("計費度數(度)/EnergyConsumption(kWh)", line.x, line.y, line.width, line.height, line.block_key)
+    figure = _POINT_FOR_COMMA.match(text)
+    if figure:
+        return OcrLine(figure[1] + figure[2].replace(".", ",") + figure[3], line.x, line.y, line.width, line.height, line.block_key)
+    for pattern, wording in _LABEL_WORDINGS:
+        replaced, count = pattern.subn(wording, text)
+        if count:
+            return OcrLine(replaced, line.x, line.y, line.width, line.height, line.block_key)
+    return line
+
+
+def _fill_from_page(result: BillResult, lines: list[OcrLine]) -> None:
+    """A 電號 or period its label could not find (a heading cut off, misread): by its look.
+
+    A 電號's pattern is found nowhere else on a bill, and the other date on a
+    bill never comes as a range.
+    """
+    def has(key: str) -> bool:
+        return any(isinstance(result.get(block), dict) and result[block].get(key) for block in ("user_info", "payment_info"))
+
+    def store(key: str, value: Any) -> None:
+        fields = result.setdefault("user_info", {})
+        fields[key] = value
+        block = result.setdefault("blocks", {}).get("user_info")
+        if block is not None:
+            block.setdefault("fields", fields)[key] = value
+
+    flat = [(re.sub(r"\s+", "", line.text), line) for line in lines]
+    if not has("customer_number"):
+        meters = {match.group(0) for text, _ in flat for match in _METER.finditer(text)}
+        if len(meters) == 1:
+            store("customer_number", meters.pop())
+    if has("billing_period"):
+        return
+    date = lambda groups: f"{groups[0]}/{groups[1].zfill(2)}/{groups[2].zfill(2)}"
+
+    def long_enough(start: tuple[str, ...], end: tuple[str, ...]) -> bool:
+        """A billing period runs weeks; two dates days apart are a reading and a charge date."""
+        days = lambda groups: int(groups[0]) * 365 + int(groups[1]) * 30 + int(groups[2])
+        return 20 <= days(end) - days(start) <= 100
+
+    for text, _ in flat:
+        match = _PERIOD.search(text)
+        if match and long_enough(match.groups()[:3], match.groups()[3:]):
+            store("billing_period", {"start": date(match.groups()[:3]), "end": date(match.groups()[3:])})
+            return
+    # Written on two lines: 109/12/01~ above 109/12/31.
+    for text, line in flat:
+        start = _PERIOD_START.search(text)
+        if not start:
+            continue
+        for other_text, other in flat:
+            end = _PERIOD_END.match(other_text)
+            if end and 0 < other.y - line.y < line.height * 2.5 and abs(other.x - line.x) < line.width and long_enough(start.groups(), end.groups()):
+                store("billing_period", {"start": date(start.groups()), "end": date(end.groups())})
+                return
+
+
+_KWH_ROWS = ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")
+
+
+def _restore_kwh_headings(lines: list[OcrLine]) -> list[OcrLine]:
+    """The kWh rows of a heading OCR missed still say what they are.
+
+    Bills print 計費度數 and then 轉供度數, each with the same rows, so the second
+    time a row is printed it starts 轉供度數. Without any row seen twice, or with
+    a heading in the way, nothing is added.
+    """
+    has_billed = any(re.sub(r"\s+", "", line.text).startswith("計費度數") for line in lines)
+    has_transfer = any(re.sub(r"\s+", "", line.text).startswith("轉供度數") for line in lines)
+    if has_billed and has_transfer:
+        return lines
+    rows = sorted((line for line in lines if re.sub(r"\s+", "", line.text) in _KWH_ROWS), key=lambda line: line.y)
+    if not rows:
+        return lines
+    seen: set[str] = set()
+    second = None
+    for line in rows:
+        text = re.sub(r"\s+", "", line.text)
+        if text in seen:
+            second = line
+            break
+        seen.add(text)
+    heading = lambda text, row: OcrLine(text, row.x, row.y - row.height * 1.1, row.width, row.height, row.block_key)
+    added = []
+    first = rows[0]
+    if not has_billed and not (has_transfer and second is None):
+        added.append(heading("計費度數(度)", first))
+    if not has_transfer and second is not None:
+        added.append(heading("轉供度數(度)", second))
+    return [*lines, *added]
+
+
 def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
+    ordered = _restore_kwh_headings([_canonical_label(line) for line in lines])
+    result = _parse_layout(ordered)
+    _fill_from_page(result, ordered)
+    return result
+
+
+def _parse_layout(lines: Iterable[OcrLine]) -> BillResult:
     ordered = sorted(lines, key=lambda line: (line.y, line.x))
     if _is_detailed_high_voltage_layout(ordered):
         return _parse_detailed_high_voltage_layout(ordered)
@@ -1724,8 +1846,22 @@ def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
             charge_fields["total_amount_twd"] = max(plausible_totals)
             total_amount = charge_fields["total_amount_twd"]
             warnings.append("total_recovered_from_payment_summary")
+    # A total not read at all is the pretax total and tax, when both were read.
+    # A total that was read stays: 本期預繳 makes it rightly differ from them.
+    pretax, tax = charge_fields.get("pretax_total_twd"), charge_fields.get("business_tax_twd")
+    if (
+        total_amount is None
+        and isinstance(pretax, (int, float)) and pretax > 0
+        and isinstance(tax, (int, float)) and tax > 0
+        and "prepaid_applied_twd" not in charge_fields
+    ):
+        charge_fields["total_amount_twd"] = total_amount = round(pretax + tax)
+        warnings.append("total_worked_out_from_pretax")
     if (
         not has_adjustments
+        # Only where the energy charge is the whole bill: on a bill with other
+        # charges, this would put the energy charge in as the total.
+        and "basic_charge_twd" not in charge_fields
         and isinstance(energy_charge, (int, float))
         and isinstance(total_amount, (int, float))
         and 0 <= total_amount < energy_charge * 0.1

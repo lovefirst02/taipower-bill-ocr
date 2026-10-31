@@ -18,7 +18,7 @@ from taipower_bill_ocr.keyword_extract import DEFAULT_KEYWORDS
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 WORKBOOK_MODES = ("shared", "per_user")
-OCR_BACKENDS = ("crosscheck", "paddleocr", "windows")
+OCR_BACKENDS = ("crosscheck", "paddleocr", "windows", "onnx")
 
 def _words(value: Any) -> list[str]:
     """A keyword list from a list, or text with one per line (or comma separated)."""

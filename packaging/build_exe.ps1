@@ -37,6 +37,14 @@ uv run --frozen pyinstaller packaging\TaipowerBillOCR.spec --noconfirm --clean -
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 $app = Join-Path $root "dist\TaipowerBillOCR"
+# The fast engine's models, when they are on this PC (see training/).
+$onnxModels = Join-Path $root "models\onnx"
+if (Test-Path (Join-Path $onnxModels "bill_reader.onnx")) {
+    Write-Host "==> Bundling ONNX models"
+    $onnxTarget = Join-Path $app "onnx_models"
+    New-Item -ItemType Directory -Force $onnxTarget | Out-Null
+    Copy-Item (Join-Path $onnxModels "*") $onnxTarget -Force
+}
 Write-Host "==> Bundling models for offline use"
 $models = Join-Path $app "models"
 New-Item -ItemType Directory -Force $models | Out-Null

@@ -37,6 +37,7 @@ const KEYWORDS: { key: KeywordSetting; label: string; hint: string }[] = [
 
 const ENGINES: Record<string, string> = {
   crosscheck: "PaddleOCR + Windows OCR cross-check (recommended)",
+  onnx: "Fast: model trained on Taipower bills (ONNX, no cross-check)",
   paddleocr: "PaddleOCR only",
   windows: "Windows OCR only (fastest, less accurate)",
 };

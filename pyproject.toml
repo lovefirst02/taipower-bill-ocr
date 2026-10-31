@@ -26,7 +26,10 @@ paddleocr = ["paddleocr>=3.5,<4", "paddlepaddle==3.2.0"]
 mistralocr = ["mistralai==2.9.4"]
 excel = ["openpyxl>=3.1"]
 # Everything the desktop app needs: uv sync --extra app
-app = ["taipower-bill-ocr[excel,paddleocr]"]
+# The fast engine (OCR_BACKENDS "onnx"): opencv comes with paddleocr in the app.
+# winrt-runtime 3.x crashes onnxruntime when it is imported first (access violation).
+onnx = ["onnxruntime>=1.20", "winrt-runtime>=4.0; python_version >= '3.11'"]
+app = ["taipower-bill-ocr[excel,paddleocr,onnx]"]
 
 [project.scripts]
 taipower-bill-watch = "taipower_bill_ocr.watcher:main"

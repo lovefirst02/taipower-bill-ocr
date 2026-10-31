@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -17,7 +18,11 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 SUPPORTED_SUFFIXES = PDF_SUFFIXES | IMAGE_SUFFIXES
 # "crosscheck" keeps PaddleOCR's values and re-reads charge pages with
 # Windows OCR to fill gaps and flag disagreements.
-OCR_BACKENDS = ("crosscheck", "paddleocr", "windows")
+# "onnx" reads with ONNX models on the CPU, in seconds and without Paddle: a
+# bill with the model trained on bills; any other page, if the general model
+# is there too (the desktop app has it, TaipowerBillReader.exe does not);
+# "onnx_crosscheck" also re-reads charge pages with Windows OCR.
+OCR_BACKENDS = ("crosscheck", "paddleocr", "windows", "onnx", "onnx_crosscheck")
 PADDLE_SCORE_THRESHOLD = 0.45
 
 
@@ -58,6 +63,17 @@ def render_page(path: Path, page_number: int | None, dpi: int) -> Any:
         return ImageOps.exif_transpose(source).convert("RGB")
 
 
+def has_bill_values(bill: BillResult) -> bool:
+    """A charge page with something of a bill on it: a page of other tables may parse as an empty one."""
+    return is_charge_page(bill) and any(
+        bill.get(path) is not None
+        for path in (
+            "charge_info.basic_charge_twd", "charge_info.energy_charge_twd", "charge_info.pretax_total_twd",
+            "charge_info.total_amount_twd", "user_info.customer_number", "payment_info.customer_number",
+        )
+    )
+
+
 class PageExtractor:
     """Extract one page at a time, loading the PaddleOCR model only once."""
 
@@ -67,21 +83,33 @@ class PageExtractor:
         self.ocr_backend = ocr_backend
         self.dpi = dpi
         self._paddle_engine: Any | None = None
+        self._general_engine: Any | None = None
 
     def _engine(self) -> Any:
         if self._paddle_engine is None:
-            from .paddle_ocr import _create_paddle_engine
+            if self.ocr_backend.startswith("onnx"):
+                from .onnx_ocr import OnnxOcrEngine, onnx_model_dir
 
-            self._paddle_engine = _create_paddle_engine("chinese_cht")
+                folder = onnx_model_dir()
+                if folder is None:
+                    raise RuntimeError("ONNX models not found: set TAIPOWER_ONNX_MODELS")
+                # TAIPOWER_BILL_READER=0 leaves out the model trained on bills, to compare
+                # without it; "only" reads with nothing else (Taipower bills only).
+                choice = os.environ.get("TAIPOWER_BILL_READER", "only" if self.ocr_backend == "onnx" else None)
+                self._paddle_engine = OnnxOcrEngine(folder, bill_reader=choice != "0", general_reader=choice != "only")
+            else:
+                from .paddle_ocr import _create_paddle_engine
+
+                self._paddle_engine = _create_paddle_engine("chinese_cht")
         return self._paddle_engine
 
     @property
     def uses_paddle(self) -> bool:
-        return self.ocr_backend in {"crosscheck", "paddleocr"}
+        return self.ocr_backend != "windows"
 
     @property
     def cross_checks(self) -> bool:
-        return self.ocr_backend == "crosscheck"
+        return self.ocr_backend in {"crosscheck", "onnx_crosscheck"}
 
     def extract(self, path: Path, page_number: int | None) -> BillResult:
         """Read a page with the primary engine."""
@@ -93,19 +121,35 @@ class PageExtractor:
         """Read a page with the second engine used for cross-checking."""
         return self._extract_windows(path, page_number)
 
-    def _extract_paddle(self, path: Path, page_number: int | None) -> BillResult:
+    def _general(self) -> Any | None:
+        """The ONNX engine for pages that are not bills, if its model is there."""
+        if self._general_engine is None:
+            from .onnx_ocr import RECOGNITION_FILE, OnnxOcrEngine, onnx_model_dir
+
+            folder = onnx_model_dir()
+            if folder is None or not (folder / RECOGNITION_FILE).is_file():
+                return None
+            self._general_engine = OnnxOcrEngine(folder)
+        return self._general_engine
+
+    def _read_with(self, engine: Any, path: Path, page_number: int | None) -> BillResult:
         from .paddle_ocr import extract_bill_with_paddleocr, extract_pdf_with_paddleocr
 
-        is_pdf = path.suffix.lower() in PDF_SUFFIXES
-        options = {
-            "score_threshold": PADDLE_SCORE_THRESHOLD,
-            "ocr_engine": self._engine(),
-        }
-        if is_pdf:
+        options = {"score_threshold": PADDLE_SCORE_THRESHOLD, "ocr_engine": engine}
+        if path.suffix.lower() in PDF_SUFFIXES:
             return extract_pdf_with_paddleocr(
                 path, page_numbers=[page_number], dpi=self.dpi, **options
             )[0]
         return extract_bill_with_paddleocr(path, **options)
+
+    def _extract_paddle(self, path: Path, page_number: int | None) -> BillResult:
+        bill = self._read_with(self._engine(), path, page_number)
+        # The bill reader only knows what bills print: anything else needs the general model.
+        if self.ocr_backend == "onnx" and not has_bill_values(bill):
+            general = self._general()
+            if general is not None:
+                return self._read_with(general, path, page_number)
+        return bill
 
     def _extract_windows(self, path: Path, page_number: int | None) -> BillResult:
         from .pipeline import extract_bill, extract_pdf
