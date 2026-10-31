@@ -143,6 +143,12 @@ class PageExtractor:
         return extract_bill_with_paddleocr(path, **options)
 
     def _extract_paddle(self, path: Path, page_number: int | None) -> BillResult:
+        if self.ocr_backend == "onnx" and path.suffix.lower() in PDF_SUFFIXES:
+            from .pdf_text import read_page
+
+            bill = read_page(path, page_number, self.dpi)
+            if bill is not None:
+                return bill
         bill = self._read_with(self._engine(), path, page_number)
         # The bill reader only knows what bills print: anything else needs the general model.
         if self.ocr_backend == "onnx" and not has_bill_values(bill):

@@ -66,7 +66,8 @@ def write_csv(files: list[Path], out: Path, extractor: PageExtractor | None = No
                 writer.writerow({column: _cell(event.record.row.get(column)) for column in columns})
                 written += 1
                 page = f" 第 {event.page_number} 頁" if event.page_number else ""
-                print(f"{event.path.name}{page}：{event.record.row.get('Custom No. 電號') or '電號未讀到'}", flush=True)
+                how = "（PDF 文字）" if event.bill is not None and event.bill.get("quality.source") == "pdf_text" else ""
+                print(f"{event.path.name}{page}：{event.record.row.get('Custom No. 電號') or '電號未讀到'}{how}", flush=True)
             elif isinstance(event, FileFinished) and event.error:
                 failures.append(f"{event.path.name}: {event.error}")
                 print(f"{event.path.name}：失敗（{event.error}）", flush=True)
