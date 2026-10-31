@@ -247,6 +247,9 @@ def _recognize_paddle_blocks(
                 ]
                 lines.extend(inside)
                 words_by_block[block_key] = inside
+            # Blocks found too narrow leave out what the page read beside them: the values say so.
+            if _values_read(found) > _values_read(lines):
+                return found, {}, {}, document_type, "blocks_lost_values"
             bounds = {key: {"x": left, "y": top, "width": right - left, "height": bottom - top}
                       for key, (left, top, right, bottom) in detected.items()}
             return lines, bounds, words_by_block, document_type, detection_method
@@ -299,6 +302,13 @@ def _recognize_paddle_blocks(
         for key, (left, top, right, bottom) in detected.items()
     }
     return lines, bounds, words_by_block, document_type, detection_method
+
+
+def _values_read(lines: list[OcrLine]) -> int:
+    """How many of a bill's columns these lines fill."""
+    from .excel_export import _bill_values
+
+    return sum(value is not None for value in _bill_values(parse_bill_layout(lines)).values())
 
 
 # Labels whose value sits to their right on the same row. When Paddle's text

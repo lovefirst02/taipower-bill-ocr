@@ -9,6 +9,7 @@ in only what it lacks, and read whatever page's text cannot be trusted.
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,8 @@ def lines_of(words: list[dict[str, Any]], scale: float = 1.0, walls: list[tuple[
     """
     lines: list[OcrLine] = []
     rows: list[list[dict[str, Any]]] = []
+    # A browser's PDF can store 用, 金, 月 as Kangxi radicals: the same to see, not to compare.
+    words = [{**word, "text": unicodedata.normalize("NFKC", word["text"])} for word in words]
     for word in sorted(words, key=lambda item: (item["top"] + item["bottom"]) / 2):
         middle = (word["top"] + word["bottom"]) / 2
         if rows and abs(middle - (rows[-1][0]["top"] + rows[-1][0]["bottom"]) / 2) < (word["bottom"] - word["top"]) / 2:

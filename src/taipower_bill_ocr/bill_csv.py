@@ -38,7 +38,7 @@ CSV_COLUMNS = (
 )
 DETAIL_COLUMNS = ("來源檔案", "頁碼", "需人工檢查")
 BACKEND = "onnx"
-READER_VERSION = "0.4.0"
+READER_VERSION = "0.5.0"
 
 
 def _inputs(paths: list[str]) -> list[Path]:

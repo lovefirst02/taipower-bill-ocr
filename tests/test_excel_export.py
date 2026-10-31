@@ -96,9 +96,15 @@ class ExcelRowTests(unittest.TestCase):
         bill = high_voltage_bill()
         del bill["user_info"]["energy_consumption"]["peak_kwh"]
         del bill["user_info"]["transferred_energy"]["peak_kwh"]
+        del bill["user_info"]["transferred_energy"]["semi_peak_kwh"]
         row = bill_to_row(bill)
         self.assertIn("缺少計費度數_尖峰度數", row["需人工檢查"])
         self.assertIn("缺少轉供度數_尖峰度數", row["需人工檢查"])
+
+    def test_transfers_with_a_semi_peak_row_need_no_peak_row(self):
+        bill = high_voltage_bill()
+        del bill["user_info"]["transferred_energy"]["peak_kwh"]
+        self.assertNotIn("缺少轉供度數_尖峰度數", bill_to_row(bill)["需人工檢查"] or "")
 
     def test_energy_charged_with_no_kwh_read_is_flagged(self):
         bill = high_voltage_bill()
@@ -112,6 +118,10 @@ class ExcelRowTests(unittest.TestCase):
 
     def test_a_pre_tax_total_not_read_is_flagged(self):
         self.assertIn("缺少稅前應繳總金額", bill_to_row(high_voltage_bill(pretax_total_twd=None))["需人工檢查"])
+
+    def test_a_bill_prepayment_paid_prints_no_pre_tax_total(self):
+        row = bill_to_row(high_voltage_bill(pretax_total_twd=None, total_amount_twd=0))
+        self.assertNotIn("缺少稅前應繳總金額", row["需人工檢查"] or "")
 
     def test_a_bill_with_no_time_of_use_rows_needs_no_peak(self):
         bill = high_voltage_bill()

@@ -40,6 +40,7 @@ _ANGLE_SIDE = 1280
 _SMALL_TEXT = 18  # pixels high, the middle line of a page: below this the detector misses lines
 _KEPT_SHARE = 0.5  # of a page's lines read as something a bill prints: below this, look again at half size
 _ANGLE_LINES = 5
+_ROW_HEIGHT = 300  # pixels: shorter than this, a picture is a row cut from a page
 _REC_HEIGHT = 48
 _REC_BATCH = 16
 
@@ -225,8 +226,9 @@ class OnnxOcrEngine:
                     boxes, texts, scores = found, again, again_scores
                     used_half = True
             detector = "bill_detector" if self._detector_settings is BILL_DETECTOR else "Paddle 偵測"
-            self.last_read = {"models": f"{detector} + bill_reader", "image": f"{image.shape[1]}x{image.shape[0]}", "found": first[0], "kept": first[1],
-                              "half_size": used_half, "kept_in_the_end": sum(map(bool, texts)), "labels": _labels(texts)}
+            if image.shape[0] >= _ROW_HEIGHT:  # one row read again is not the page
+                self.last_read = {"models": f"{detector} + bill_reader", "image": f"{image.shape[1]}x{image.shape[0]}", "found": first[0], "kept": first[1],
+                                  "half_size": used_half, "kept_in_the_end": sum(map(bool, texts)), "labels": _labels(texts)}
             return [{"rec_texts": texts, "rec_scores": scores, "rec_polys": boxes}]
         read = self._recognize(crops)
         texts, scores = [text for text, _ in read], [score for _, score in read]

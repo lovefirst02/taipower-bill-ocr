@@ -71,6 +71,21 @@ class ReadPageTests(unittest.TestCase):
         self.assertEqual(row["應繳總金額"], 525000)
         self.assertEqual(row["頁碼"], 1)
 
+    def test_characters_stored_as_kangxi_radicals_read_as_the_characters_they_look_like(self):
+        radicals = {"用": "⽤", "金": "⾦", "月": "⽉", "日": "⽇", "至": "⾄", "戶": "⼾"}
+        words = [{**item, "text": "".join(radicals.get(char, char) for char in item["text"])} for item in TABLE_PAGE]
+        self.assertNotEqual(words, TABLE_PAGE)
+        notes = {}
+        with pdf_of(words):
+            bill = pdf_text.read_page(Path("a.pdf"), 1, 200, notes)
+
+        row = bill_to_record(bill, "a.pdf").row
+        self.assertEqual(notes.get("missing"), None)
+        self.assertEqual(row["Billing Period 計費期間"], "115/07/01~115/07/31")
+        self.assertEqual(row["Custom No. 電號"], "10-51-2345-67-8")
+        self.assertEqual(row["計費度數_尖峰度數"], 1000)
+        self.assertEqual(row["稅前應繳總金額"], 500000)
+
     def test_a_scan_has_no_text_to_go_by(self):
         with pdf_of([]):
             self.assertIsNone(pdf_text.read_page(Path("a.pdf"), 1, 200))

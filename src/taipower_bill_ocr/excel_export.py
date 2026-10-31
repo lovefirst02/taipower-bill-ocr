@@ -371,7 +371,9 @@ def bill_to_record(
         issues.append(total_issue)
 
     for label in ("Billing Period 計費期間", "Custom No. 電號", "應繳總金額", "稅前應繳總金額"):
-        if row[label] is None:
+        # A bill its prepayment paid in full prints a total of 0 and no pre-tax total.
+        printed_none = label == "稅前應繳總金額" and row["應繳總金額"] == 0
+        if row[label] is None and not printed_none:
             issues.append(Issue(f"缺少{label}", f"Missing {COLUMN_LABELS_EN[label]}", [label]))
 
     # A file shows these as 0, so a bill charged for energy with none read must say so.
@@ -379,10 +381,12 @@ def bill_to_record(
     if row["流動電費"] and all(row[key] is None for key in billed):
         issues.append(Issue("缺少計費度數", "Missing billed kWh", billed))
 
-    # A time-of-use bill always prints its peak row, even at 0.
+    # A time-of-use bill always prints its billed peak row, even at 0; its transfers
+    # leave the peak row out in months that have a semi-peak row instead.
     for group_label, _ in _ENERGY_GROUPS:
         peak = f"{group_label}_尖峰度數"
-        if row[peak] is None and row[f"{group_label}_離峰度數"] is not None:
+        replaced = group_label == "轉供度數" and row[f"{group_label}_半尖峰度數"] is not None
+        if row[peak] is None and row[f"{group_label}_離峰度數"] is not None and not replaced:
             issues.append(Issue(f"缺少{peak}", f"Missing {COLUMN_LABELS_EN[peak]}", [peak]))
 
     # Parser warnings are already English codes describing inferred values.
