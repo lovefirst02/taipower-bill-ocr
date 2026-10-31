@@ -156,7 +156,8 @@ def _draw_text(text: str, rng: random.Random) -> tuple[np.ndarray, tuple[int, in
             return font
         return chinese if _has_glyph(chinese_path, chinese, char) else fallback
 
-    tracking = rng.choice([0, 0, 0, 1, 2, 3, -1]) * size / 30
+    # Some layouts print widely spaced: "經 常 ( 尖 峰 ) 度 數".
+    tracking = rng.choice([0, 0, 0, 0, 1, 2, 3, -1, 5, 8]) * size / 30
     if rng.random() < 0.1:
         text = text.replace("元", " 元")
     advances = [font_of(char).getlength(char) + tracking for char in text]

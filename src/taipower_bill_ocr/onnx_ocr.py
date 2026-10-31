@@ -35,8 +35,10 @@ PADDLE_DETECTOR = {"thresh": 0.3, "box_thresh": 0.6, "unclip": 1.5}
 # Its target regions are larger than Paddle's (training/synth_det.py: SHRINK), so they grow back by more.
 BILL_DETECTOR = {"thresh": 0.3, "box_thresh": 0.5, "unclip": 1.8}
 _DET_MAX_SIDE = 4000
+_BILL_DET_SIDE = 2048  # the bill detector cuts up text larger than it trained on: a larger picture is looked at shrunk
 _ANGLE_SIDE = 1280
 _SMALL_TEXT = 18  # pixels high, the middle line of a page: below this the detector misses lines
+_KEPT_SHARE = 0.5  # of a page's lines read as something a bill prints: below this, look again at half size
 _ANGLE_LINES = 5
 _REC_HEIGHT = 48
 _REC_BATCH = 16
@@ -97,9 +99,9 @@ class OnnxOcrEngine:
         paddle = folder / DETECTION_FILE
         wanted = not general_reader and os.environ.get("TAIPOWER_DETECTOR") != "paddle"
         if own.is_file() and (wanted or not paddle.is_file()):
-            self._detector, self._detector_settings = _session(own), BILL_DETECTOR
+            self._detector, self._detector_settings, self._detector_side = _session(own), BILL_DETECTOR, _BILL_DET_SIDE
         else:
-            self._detector, self._detector_settings = _session(paddle), PADDLE_DETECTOR
+            self._detector, self._detector_settings, self._detector_side = _session(paddle), PADDLE_DETECTOR, _DET_MAX_SIDE
         self._recognizer = self._characters = None
         if general_reader:
             self._recognizer = _session(folder / RECOGNITION_FILE)
@@ -110,9 +112,9 @@ class OnnxOcrEngine:
         self._reader_chars = json.loads((folder / READER_CHARS_FILE).read_text(encoding="utf-8")) if self._reader else ""
 
     # ------------------------------------------------------------ detection
-    def _detect(self, image: np.ndarray) -> list[np.ndarray]:
+    def _detect(self, image: np.ndarray, side: int | None = None) -> list[np.ndarray]:
         height, width = image.shape[:2]
-        scale = min(1.0, _DET_MAX_SIDE / max(height, width))
+        scale = min(1.0, (side or self._detector_side) / max(height, width))
         new_h, new_w = max(32, round(height * scale / 32) * 32), max(32, round(width * scale / 32) * 32)
         resized = cv2.resize(image, (new_w, new_h))
         tensor = ((resized.astype(np.float32) / 255 - _DET_MEAN) / _DET_STD).transpose(2, 0, 1)[None]
@@ -196,25 +198,40 @@ class OnnxOcrEngine:
         in the given image's coordinates; the crops keep the larger pixels.
         """
         boxes = self._detect(image)
+        longest = max(image.shape[:2])
         heights = [np.linalg.norm(box[3] - box[0]) for box in boxes]
-        small = not heights or float(np.median(heights)) < _SMALL_TEXT
-        if not small or max(image.shape[:2]) * 2 > _DET_MAX_SIDE:
-            return boxes, [_crop(image, box) for box in boxes]
-        larger = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        found = self._detect(larger)
-        return [box / 2 for box in found], [_crop(larger, box) for box in found]
+        small = not heights or float(np.median(heights)) * min(1.0, self._detector_side / longest) < _SMALL_TEXT
+        if small and longest * 2 <= _DET_MAX_SIDE:
+            larger = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            found = self._detect(larger, _DET_MAX_SIDE)
+            return [box / 2 for box in found], [_crop(larger, box) for box in found]
+        if small and longest > self._detector_side:
+            boxes = self._detect(image, _DET_MAX_SIDE)
+        return boxes, [_crop(image, box) for box in boxes]
 
     def predict(self, source: Any) -> list[dict[str, Any]]:
         image = _read_image(source)
         boxes, crops = self._boxes_and_crops(image)
         if self._recognizer is None:
             texts, scores = self._read_all_with_bill_reader(crops)
+            # Text larger than the detector learned comes apart into pieces that read as nothing.
+            if sum(map(bool, texts)) < _KEPT_SHARE * len(texts):
+                found = [box * 2 for box in self._detect(cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA))]
+                crops = [_crop(image, box) for box in found]
+                again, again_scores = self._read_all_with_bill_reader(crops)
+                if _labels(again) > _labels(texts):
+                    boxes, texts, scores = found, again, again_scores
             return [{"rec_texts": texts, "rec_scores": scores, "rec_polys": boxes}]
         read = self._recognize(crops)
         texts, scores = [text for text, _ in read], [score for _, score in read]
         if self._reader is not None:
             self._refine(texts, scores, crops)
         return [{"rec_texts": texts, "rec_scores": scores, "rec_polys": boxes}]
+
+
+def _labels(texts: list[str]) -> int:
+    """How many lines are a label a bill prints; figures say little, as scraps read as figures too."""
+    return sum(1 for text in map(normal, texts) if is_label(text) or split_label(text) is not None)
 
 
 def boxes_from_map(probability: np.ndarray, width: int, height: int, *, thresh: float, box_thresh: float, unclip: float) -> list[np.ndarray]:

@@ -8,7 +8,38 @@ except ImportError:
     cv2 = None
 
 if cv2 is not None:
-    from taipower_bill_ocr.onnx_ocr import BILL_DETECTOR, boxes_from_map
+    from taipower_bill_ocr.onnx_ocr import _BILL_DET_SIDE, _DET_MAX_SIDE, BILL_DETECTOR, OnnxOcrEngine, boxes_from_map
+
+
+@unittest.skipIf(cv2 is None, "opencv is not installed")
+class LargePictureTest(unittest.TestCase):
+    def _engine(self, boxes):
+        engine = OnnxOcrEngine.__new__(OnnxOcrEngine)
+        engine._detector_side = _BILL_DET_SIDE
+        engine.calls = []
+
+        def detect(image, side=None):
+            engine.calls.append(side)
+            return boxes
+
+        engine._detect = detect
+        return engine
+
+    def test_a_large_picture_with_large_text_is_looked_at_once(self):
+        tall = np.array([[0, 0], [400, 0], [400, 60], [0, 60]], dtype=np.float32)
+        engine = self._engine([tall])
+
+        engine._boxes_and_crops(np.zeros((3000, 4000, 3), dtype=np.uint8))
+
+        self.assertEqual(engine.calls, [None])
+
+    def test_a_large_picture_of_tiny_text_is_looked_at_in_full(self):
+        low = np.array([[0, 0], [400, 0], [400, 20], [0, 20]], dtype=np.float32)
+        engine = self._engine([low])
+
+        engine._boxes_and_crops(np.zeros((3000, 4000, 3), dtype=np.uint8))
+
+        self.assertEqual(engine.calls, [None, _DET_MAX_SIDE])
 
 
 @unittest.skipIf(cv2 is None, "opencv is not installed")

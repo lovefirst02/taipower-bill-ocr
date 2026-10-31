@@ -168,6 +168,13 @@ def _total_issue(row: Mapping[str, Any], tax: Any) -> Issue | None:
     )
 
 
+def _drop_misread_minus(row: dict[str, Any]) -> None:
+    """A speck before the total can read as a minus: the pre-tax total says when it was."""
+    pretax, total = row["稅前應繳總金額"], row["應繳總金額"]
+    if _is_number(pretax) and _is_number(total) and total < 0 < pretax and abs(-total - round(pretax * 1.05)) <= 2:
+        row["應繳總金額"] = -total
+
+
 def _passes_bill_checks(
     key: str, value: Any, row: Mapping[str, Any], tax: Any
 ) -> bool | None:
@@ -189,6 +196,12 @@ def is_charge_page(bill: BillResult) -> bool:
     return isinstance(bill.get("charge_info"), Mapping)
 
 
+def _dashed_meter(number: str) -> str:
+    """One meter, one spelling: some layouts print 00123456789, most 00-12-3456-78-9."""
+    match = re.fullmatch(r"(\d{2})(\d{2})(\d{4})(\d{2})(\d)", number)
+    return "-".join(match.groups()) if match else number
+
+
 def _bill_values(bill: BillResult) -> dict[str, Any]:
     """Read every data column from one OCR result."""
     customer_number = _first(
@@ -198,7 +211,7 @@ def _bill_values(bill: BillResult) -> dict[str, Any]:
         "Billing Period 計費期間": _format_period(
             _first(bill, "user_info.billing_period", "payment_info.billing_period")
         ),
-        "Custom No. 電號": str(customer_number) if customer_number else None,
+        "Custom No. 電號": _dashed_meter(str(customer_number)) if customer_number else None,
         "基本電費": bill.get("charge_info.basic_charge_twd"),
         "流動電費": bill.get("charge_info.energy_charge_twd"),
         "功率因數調整費": bill.get("charge_info.power_factor_adjustment_twd"),
@@ -280,6 +293,7 @@ def bill_to_record(
     if period_issue := _period_issue(row["Billing Period 計費期間"]):
         issues.append(period_issue)
 
+    _drop_misread_minus(row)
     missing = recompute_other_adjustment(row)
     if missing:
         missing_en = ", ".join(COLUMN_LABELS_EN[label] for label in missing)
@@ -305,6 +319,12 @@ def bill_to_record(
     for label in ("Billing Period 計費期間", "Custom No. 電號", "應繳總金額"):
         if row[label] is None:
             issues.append(Issue(f"缺少{label}", f"Missing {COLUMN_LABELS_EN[label]}", [label]))
+
+    # A time-of-use bill always prints its peak row, even at 0.
+    for group_label, _ in _ENERGY_GROUPS:
+        peak = f"{group_label}_尖峰度數"
+        if row[peak] is None and row[f"{group_label}_離峰度數"] is not None:
+            issues.append(Issue(f"缺少{peak}", f"Missing {COLUMN_LABELS_EN[peak]}", [peak]))
 
     # Parser warnings are already English codes describing inferred values.
     issues.extend(

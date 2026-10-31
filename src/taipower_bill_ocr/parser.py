@@ -1186,6 +1186,12 @@ def _parse_detailed_high_voltage_layout(lines: list[OcrLine]) -> BillResult:
         )
         if customer_number_match:
             user_fields["customer_number"] = customer_number_match.group(0)
+    if "customer_number" not in user_fields and (meter_label := label_line("user_info", "電號")) is not None:
+        # A tall cell prints the number at its top, above the label's row.
+        for line in scoped["user_info"]:
+            if abs(line.y - meter_label.y) <= meter_label.height * 1.5 and re.fullmatch(r"\d{11}", _compact(line.text)):
+                user_fields["customer_number"] = _compact(line.text)
+                break
     due_date_text = right_text("user_info", "繳費期限")
     if due_date_text:
         due_date = roc_date(due_date_text)

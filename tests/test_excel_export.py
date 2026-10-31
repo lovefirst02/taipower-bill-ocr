@@ -82,6 +82,34 @@ class ExcelRowTests(unittest.TestCase):
         row = bill_to_row(high_voltage_bill(pretax_total_twd=None))
         self.assertEqual(row["其他調整費用"], 5000)
 
+    def test_a_minus_the_pre_tax_total_contradicts_is_dropped(self):
+        row = bill_to_row(high_voltage_bill(total_amount_twd=-800000))
+        self.assertEqual(row["應繳總金額"], 800000)
+        self.assertIsNone(row["需人工檢查"])
+
+    def test_a_negative_total_nothing_contradicts_stays_and_is_flagged(self):
+        row = bill_to_row(high_voltage_bill(total_amount_twd=-5000))
+        self.assertEqual(row["應繳總金額"], -5000)
+        self.assertIn("應繳總金額與稅前金額", row["需人工檢查"])
+
+    def test_a_peak_row_not_read_is_flagged_where_others_were(self):
+        bill = high_voltage_bill()
+        del bill["user_info"]["energy_consumption"]["peak_kwh"]
+        del bill["user_info"]["transferred_energy"]["peak_kwh"]
+        row = bill_to_row(bill)
+        self.assertIn("缺少計費度數_尖峰度數", row["需人工檢查"])
+        self.assertIn("缺少轉供度數_尖峰度數", row["需人工檢查"])
+
+    def test_a_bill_with_no_time_of_use_rows_needs_no_peak(self):
+        bill = high_voltage_bill()
+        del bill["user_info"]["transferred_energy"]
+        self.assertIsNone(bill_to_row(bill)["需人工檢查"])
+
+    def test_a_meter_printed_without_dashes_is_spelled_as_the_others(self):
+        bill = high_voltage_bill()
+        bill["user_info"]["customer_number"] = "00123456789"
+        self.assertEqual(bill_to_row(bill)["Custom No. 電號"], "00-12-3456-78-9")
+
     def test_detailed_layout_reads_energy_usage_block(self):
         bill = high_voltage_bill()
         bill["energy_usage"] = bill["user_info"].pop("energy_consumption")
