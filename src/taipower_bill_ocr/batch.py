@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from .excel_export import REVIEW_COLUMN, BillRecord, Issue, bill_to_record, is_charge_page
+from .excel_export import REVIEW_COLUMN, BillRecord, Issue, bill_to_record, fill_missing, is_charge_page
 from .field_locator import FieldLocation, locate_fields
 from .parser import BillResult
 
@@ -142,19 +142,45 @@ class PageExtractor:
             )[0]
         return extract_bill_with_paddleocr(path, **options)
 
+    def _fill_gaps(self, bill: BillResult, path: Path, page_number: int | None) -> None:
+        """What a PDF's text lacks, from a model; what a model read is flagged as such."""
+        quality = bill["quality"]
+        try:
+            engine = self._engine()
+            read = self._read_with(engine, path, page_number)
+        except Exception as error:  # noqa: BLE001 - the text's values still stand
+            quality["pdf_text"]["fill_failed"] = f"{type(error).__name__}: {error}"
+            return
+        filled = fill_missing(bill, read)
+        quality["pdf_text"].update(filled=filled, model_lines=[line.text for line in getattr(read, "ocr_lines", None) or []])
+        model = getattr(engine, "last_read", None)
+        quality["model_read"] = model if isinstance(model, dict) else None
+        if filled:
+            quality["warnings"] = [*(quality.get("warnings") or []), f"{'、'.join(filled)} 由模型補值"]
+
     def _extract_paddle(self, path: Path, page_number: int | None) -> BillResult:
+        notes: dict[str, Any] = {}
         if self.ocr_backend == "onnx" and path.suffix.lower() in PDF_SUFFIXES:
             from .pdf_text import read_page
 
-            bill = read_page(path, page_number, self.dpi)
+            bill = read_page(path, page_number, self.dpi, notes)
             if bill is not None:
+                bill["quality"]["pdf_text"] = notes
+                if notes.get("missing"):
+                    self._fill_gaps(bill, path, page_number)
                 return bill
-        bill = self._read_with(self._engine(), path, page_number)
+        engine = self._engine()
+        bill = self._read_with(engine, path, page_number)
         # The bill reader only knows what bills print: anything else needs the general model.
         if self.ocr_backend == "onnx" and not has_bill_values(bill):
             general = self._general()
             if general is not None:
-                return self._read_with(general, path, page_number)
+                engine, bill = general, self._read_with(general, path, page_number)
+        model = getattr(engine, "last_read", None)
+        if notes.get("words") or isinstance(model, dict):
+            quality = bill.setdefault("quality", {})
+            quality["pdf_text"] = notes
+            quality["model_read"] = model if isinstance(model, dict) else None
         return bill
 
     def _extract_windows(self, path: Path, page_number: int | None) -> BillResult:

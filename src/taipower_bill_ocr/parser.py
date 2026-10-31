@@ -1428,6 +1428,8 @@ _ROC_DATE = r"(\d{2,3})[/.年](\d{1,2})[/.月](\d{1,2})日?"
 _PERIOD = re.compile(_ROC_DATE + r"[至~～\-－]" + _ROC_DATE)
 _PERIOD_START = re.compile(_ROC_DATE + r"[至~～\-－]$")
 _PERIOD_END = re.compile(r"^" + _ROC_DATE + r"$")
+_WRAPPED_START = re.compile(_ROC_DATE + r"(?:[至~～\-－]\d{0,3}年?\d{0,2}月?)?$")
+_WRAPPED_REST = re.compile(r"[至~～\-－]?\d{0,3}")
 
 
 # Charges print one decimal and rates four: three after a point is a thousands
@@ -1448,6 +1450,45 @@ def _canonical_label(line: OcrLine) -> OcrLine:
         if count:
             return OcrLine(replaced, line.x, line.y, line.width, line.height, line.block_key)
     return line
+
+
+def _long_enough(start: tuple[str, ...], end: tuple[str, ...]) -> bool:
+    """A billing period runs weeks; two dates days apart are a reading and a charge date."""
+    days = lambda groups: int(groups[0]) * 365 + int(groups[1]) * 30 + int(groups[2])
+    return 20 <= days(end) - days(start) <= 100
+
+
+def _on_reading_row(line: OcrLine, lines: list[OcrLine]) -> bool:
+    """Beside 本次抄表日 or 下次抄表日: a date here is never the end of a period."""
+    return any("抄表日" in re.sub(r"\s+", "", other.text) and abs(other.y - line.y) < line.height / 2 for other in lines)
+
+
+def _join_wrapped_period(lines: list[OcrLine]) -> list[OcrLine]:
+    """A narrow cell breaks a period anywhere: 115年07月01日至11 above 5年07月31日."""
+    flat = lambda line: re.sub(r"\s+", "", line.text)
+    for line in lines:
+        if not _WRAPPED_START.search(flat(line)):
+            continue
+        rest = sorted((other for other in lines if other is not line and other.x > line.x
+                       and abs(other.y - line.y) < line.height / 2 and _WRAPPED_REST.fullmatch(flat(other))),
+                      key=lambda other: other.x)
+        below = sorted((other for other in lines if 0 < other.y - line.y < line.height * 2.5
+                        and abs(other.x - line.x) < line.height * 2), key=lambda other: other.y)
+        if below and _on_reading_row(below[0], lines):
+            continue
+        attempts = [([line, *rest, *below[:1]], None), ([line, *below[:1]], None)]
+        # The "11" of the end's year can go unread at the break: the start says what it was.
+        head = re.sub(r"\d{1,3}$", "", "".join(flat(part) for part in (line, *rest)))
+        start, tail = _PERIOD_START.search(head), re.match(r"\d{0,3}年(.*)", flat(below[0])) if below else None
+        if start and tail:
+            attempts.append(([line, *rest, below[0]], f"{head}{start.group(1)}年{tail.group(1)}"))
+        for parts, spelled in attempts:
+            joined = spelled or "".join(flat(part) for part in parts)
+            match = _PERIOD.search(joined)
+            if match and _long_enough(match.groups()[:3], match.groups()[3:]):
+                whole = OcrLine(joined, line.x, line.y, line.width, line.height, line.block_key)
+                return [whole if item is line else item for item in lines if not any(item is part for part in parts[1:])]
+    return lines
 
 
 def _fill_from_page(result: BillResult, lines: list[OcrLine]) -> None:
@@ -1475,14 +1516,9 @@ def _fill_from_page(result: BillResult, lines: list[OcrLine]) -> None:
         return
     date = lambda groups: f"{groups[0]}/{groups[1].zfill(2)}/{groups[2].zfill(2)}"
 
-    def long_enough(start: tuple[str, ...], end: tuple[str, ...]) -> bool:
-        """A billing period runs weeks; two dates days apart are a reading and a charge date."""
-        days = lambda groups: int(groups[0]) * 365 + int(groups[1]) * 30 + int(groups[2])
-        return 20 <= days(end) - days(start) <= 100
-
     for text, _ in flat:
         match = _PERIOD.search(text)
-        if match and long_enough(match.groups()[:3], match.groups()[3:]):
+        if match and _long_enough(match.groups()[:3], match.groups()[3:]):
             store("billing_period", {"start": date(match.groups()[:3]), "end": date(match.groups()[3:])})
             return
     # Written on two lines: 109/12/01~ above 109/12/31.
@@ -1492,7 +1528,8 @@ def _fill_from_page(result: BillResult, lines: list[OcrLine]) -> None:
             continue
         for other_text, other in flat:
             end = _PERIOD_END.match(other_text)
-            if end and 0 < other.y - line.y < line.height * 2.5 and abs(other.x - line.x) < line.width and long_enough(start.groups(), end.groups()):
+            if end and 0 < other.y - line.y < line.height * 2.5 and abs(other.x - line.x) < line.width \
+                    and _long_enough(start.groups(), end.groups()) and not _on_reading_row(other, lines):
                 store("billing_period", {"start": date(start.groups()), "end": date(end.groups())})
                 return
 
@@ -1533,7 +1570,7 @@ def _restore_kwh_headings(lines: list[OcrLine]) -> list[OcrLine]:
 
 
 def parse_bill_layout(lines: Iterable[OcrLine]) -> BillResult:
-    ordered = _restore_kwh_headings([_canonical_label(line) for line in lines])
+    ordered = _restore_kwh_headings(_join_wrapped_period([_canonical_label(line) for line in lines]))
     result = _parse_layout(ordered)
     _fill_from_page(result, ordered)
     return result
@@ -1732,7 +1769,11 @@ def _parse_layout(lines: Iterable[OcrLine]) -> BillResult:
             values = _dates(_row_text(source, date_candidate_lines))
             if pair_key == "billing_period" and len(values) < 2:
                 period_column_dates: list[str] = []
+                # The rows under the period hold other dates: a reading date is not its end.
+                readings = [line.y for line in scoped_lines if "抄表日" in _compact(line.text) and line.y > source.y]
                 for line in sorted(scoped_lines, key=lambda item: (item.y, item.x)):
+                    if readings and line.y >= min(readings) - source.height / 2:
+                        break
                     if not (
                         source.y < line.y <= source.y + max(100, source.height * 5)
                         and line.x >= source.x - source.width * 0.2

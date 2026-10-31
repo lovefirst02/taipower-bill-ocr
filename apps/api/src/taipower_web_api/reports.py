@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from taipower_bill_ocr.dataset import PROGRAM_VERSION
-from taipower_bill_ocr.excel_export import COLUMNS, REVIEW_COLUMN
+from taipower_bill_ocr.excel_export import COLUMNS, REVIEW_COLUMN, with_zeros
 from taipower_bill_ocr.master_workbook import add_document, empty_sheets, save_master, save_tables
 
 from taipower_bill_ocr.periods import split_by_month
@@ -140,6 +140,8 @@ def report_row(page: Mapping[str, Any], output_dir: Path | None = None) -> list[
         STATUS: "submitted" if submitted else "draft",
         EVIDENCE: evidence,
     }
+    if page.get("kind") != documents.OTHER:
+        row = with_zeros(row)
     return [extras[column] if column in extras else row.get(column) for column in REPORT_COLUMNS]
 
 

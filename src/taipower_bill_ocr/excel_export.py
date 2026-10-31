@@ -92,6 +92,17 @@ DATA_COLUMNS = tuple(
 )
 
 
+# Columns holding figures: in a written file, one with no value reads 0.
+FIGURE_COLUMNS = tuple(
+    key for key in COLUMNS if key not in {*_TEXT_COLUMNS, "來源檔案", "頁碼", REVIEW_COLUMN}
+)
+
+
+def with_zeros(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The row as written to a file: no figure read is 0, and 需人工檢查 says which ones."""
+    return {**row, **{key: 0 for key in FIGURE_COLUMNS if row.get(key) in (None, "")}}
+
+
 def _first(bill: BillResult, *paths: str) -> Any:
     for path in paths:
         value = bill.get(path)
@@ -227,6 +238,49 @@ def _bill_values(bill: BillResult) -> dict[str, Any]:
     return values
 
 
+def _value_paths() -> dict[str, str]:
+    paths = {
+        "Billing Period 計費期間": "user_info.billing_period",
+        "Custom No. 電號": "user_info.customer_number",
+        "基本電費": "charge_info.basic_charge_twd",
+        "流動電費": "charge_info.energy_charge_twd",
+        "功率因數調整費": "charge_info.power_factor_adjustment_twd",
+        "預繳費用": "charge_info.prepaid_applied_twd",
+        "稅前應繳總金額": "charge_info.pretax_total_twd",
+        "應繳總金額": "charge_info.total_amount_twd",
+    }
+    for group_label, group_key in _ENERGY_GROUPS:
+        for component_label, component_key in _TOU_COMPONENTS:
+            paths[f"{group_label}_{component_label}"] = f"user_info.{group_key}.{component_key}"
+    return paths
+
+
+def _store(bill: BillResult, path: str, value: Any) -> None:
+    """Into the bill and its block's fields, the two places a value is read from."""
+    block, *keys = path.split(".")
+    blocks = bill.get("blocks")
+    fields = blocks[block].get("fields") if isinstance(blocks, Mapping) and isinstance(blocks.get(block), dict) else None
+    for root in (bill.setdefault(block, {}), fields):
+        if isinstance(root, dict):
+            node = root
+            for key in keys[:-1]:
+                node = node.setdefault(key, {})
+            node[keys[-1]] = value
+
+
+def fill_missing(bill: BillResult, other: BillResult) -> list[str]:
+    """What ``bill`` lacks, from another reading of the page: the columns filled. Its own values stay."""
+    ours, theirs = _bill_values(bill), _bill_values(other)
+    paths = _value_paths()
+    filled = [column for column, value in theirs.items() if value is not None and ours[column] is None]
+    for column in filled:
+        _store(bill, paths[column], theirs[column])
+    tax = other.get("charge_info.business_tax_twd")
+    if tax is not None and bill.get("charge_info.business_tax_twd") is None:
+        _store(bill, "charge_info.business_tax_twd", tax)
+    return filled
+
+
 def bill_to_record(
     bill: BillResult,
     source: str | None = None,
@@ -316,9 +370,14 @@ def bill_to_record(
     if total_issue := _total_issue(row, tax):
         issues.append(total_issue)
 
-    for label in ("Billing Period 計費期間", "Custom No. 電號", "應繳總金額"):
+    for label in ("Billing Period 計費期間", "Custom No. 電號", "應繳總金額", "稅前應繳總金額"):
         if row[label] is None:
             issues.append(Issue(f"缺少{label}", f"Missing {COLUMN_LABELS_EN[label]}", [label]))
+
+    # A file shows these as 0, so a bill charged for energy with none read must say so.
+    billed = [f"計費度數_{label}" for label, _ in _TOU_COMPONENTS]
+    if row["流動電費"] and all(row[key] is None for key in billed):
+        issues.append(Issue("缺少計費度數", "Missing billed kWh", billed))
 
     # A time-of-use bill always prints its peak row, even at 0.
     for group_label, _ in _ENERGY_GROUPS:
@@ -400,7 +459,8 @@ def write_rows_to_excel(
         index for index, name in enumerate(COLUMNS, start=1) if name in _TEXT_COLUMNS
     ]
     for row in rows:
-        sheet.append([row.get(name) for name in COLUMNS])
+        filled = with_zeros(row)
+        sheet.append([filled.get(name) for name in COLUMNS])
         # Keep identifiers as text so Excel does not drop the leading zero.
         for index in text_column_indexes:
             sheet.cell(row=sheet.max_row, column=index).number_format = "@"

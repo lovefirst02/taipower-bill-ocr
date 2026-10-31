@@ -100,6 +100,19 @@ class ExcelRowTests(unittest.TestCase):
         self.assertIn("缺少計費度數_尖峰度數", row["需人工檢查"])
         self.assertIn("缺少轉供度數_尖峰度數", row["需人工檢查"])
 
+    def test_energy_charged_with_no_kwh_read_is_flagged(self):
+        bill = high_voltage_bill()
+        del bill["user_info"]["energy_consumption"]
+        self.assertIn("缺少計費度數", bill_to_row(bill)["需人工檢查"])
+
+    def test_no_kwh_is_right_when_no_energy_was_charged(self):
+        bill = high_voltage_bill(energy_charge_twd=0, basic_charge_twd=820000)
+        del bill["user_info"]["energy_consumption"]
+        self.assertNotIn("缺少計費度數", bill_to_row(bill)["需人工檢查"] or "")
+
+    def test_a_pre_tax_total_not_read_is_flagged(self):
+        self.assertIn("缺少稅前應繳總金額", bill_to_row(high_voltage_bill(pretax_total_twd=None))["需人工檢查"])
+
     def test_a_bill_with_no_time_of_use_rows_needs_no_peak(self):
         bill = high_voltage_bill()
         del bill["user_info"]["transferred_energy"]
@@ -162,6 +175,27 @@ class ExcelWriteTests(unittest.TestCase):
             self.assertEqual(customer_cell.value, "00-12-3456-78-9")
             self.assertEqual(customer_cell.number_format, "@")
             self.assertEqual(sheet.cell(row=2, column=15).value, 5000)
+
+    def test_a_figure_not_read_is_written_as_0_and_nothing_else_is(self):
+        from openpyxl import load_workbook
+
+        bill = high_voltage_bill(energy_charge_twd=None)
+        bill["user_info"]["customer_number"] = None
+        row = bill_to_row(bill)
+        self.assertIsNone(row["流動電費"])  # only what is written changes
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bills.xlsx"
+            write_rows_to_excel([row], path)
+            sheet = load_workbook(path).active
+            values = dict(zip(COLUMNS, [cell.value for cell in sheet[2]]))
+
+        self.assertEqual(values["流動電費"], 0)
+        self.assertEqual(values["預繳費用"], 0)
+        self.assertEqual(values["其他調整費用"], 0)
+        self.assertEqual(values["基本電費"], 700000)
+        self.assertIsNone(values["Custom No. 電號"])
+        self.assertIsNone(values["來源檔案"])
+        self.assertIn("缺少流動電費", values["需人工檢查"])
 
 
 

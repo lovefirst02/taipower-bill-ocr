@@ -214,6 +214,8 @@ class OnnxOcrEngine:
         boxes, crops = self._boxes_and_crops(image)
         if self._recognizer is None:
             texts, scores = self._read_all_with_bill_reader(crops)
+            first = (len(texts), sum(map(bool, texts)))
+            used_half = False
             # Text larger than the detector learned comes apart into pieces that read as nothing.
             if sum(map(bool, texts)) < _KEPT_SHARE * len(texts):
                 found = [box * 2 for box in self._detect(cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA))]
@@ -221,6 +223,10 @@ class OnnxOcrEngine:
                 again, again_scores = self._read_all_with_bill_reader(crops)
                 if _labels(again) > _labels(texts):
                     boxes, texts, scores = found, again, again_scores
+                    used_half = True
+            detector = "bill_detector" if self._detector_settings is BILL_DETECTOR else "Paddle 偵測"
+            self.last_read = {"models": f"{detector} + bill_reader", "image": f"{image.shape[1]}x{image.shape[0]}", "found": first[0], "kept": first[1],
+                              "half_size": used_half, "kept_in_the_end": sum(map(bool, texts)), "labels": _labels(texts)}
             return [{"rec_texts": texts, "rec_scores": scores, "rec_polys": boxes}]
         read = self._recognize(crops)
         texts, scores = [text for text, _ in read], [score for _, score in read]
